@@ -9,10 +9,10 @@ namespace Outrage.EventBus
     {
         TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber;
         FilterSubscriber<TMessage> Subscribe<TMessage>(Func<EventContext, TMessage, Task> messageDelegate, bool subscribed = true) where TMessage : IMessage;
-        FilterSubscriber<TMessage> Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage : IMessage;
-        Subscriber Subscribe(Func<EventContext, IMessage, Task> messageDelegate, bool subscribed = true);
+        ISubscriber Subscribe(Func<EventContext, IMessage, Task> messageDelegate, bool subscribed = true);
+        IEventAggregator CreateChildBus();
         Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage;
         Task PublishAsync<TMessage>() where TMessage : IMessage, new();
-        void Subscribe(ISubscriber subscriber);
+        ISubscriber Subscribe(ISubscriber subscriber);
     }
 }

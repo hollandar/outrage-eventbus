@@ -36,21 +36,24 @@ namespace Outrage.EventBus
             return filter;
         }
 
-        public FilterSubscriber<TMessage> Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage : IMessage
-        {
-            return this.Subscribe<TMessage>((ctx, msg) => { messageDelegate(); return Task.CompletedTask; }, subscribed);
-        }
-
-        public Subscriber Subscribe(Func<EventContext, IMessage, Task> messageDelegate, bool subscribed = true)
+        public ISubscriber Subscribe(Func<EventContext, IMessage, Task> messageDelegate, bool subscribed = true)
         {
             var subscriber = new Subscriber(messageDelegate);
             if (subscribed) this.Subscribe(subscriber);
             return subscriber;
         }
 
-        public void Subscribe(ISubscriber subscriber)
+        public ISubscriber Subscribe(ISubscriber subscriber)
         {
             this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber));
+            return subscriber;
+        }
+
+        public IEventAggregator CreateChildBus()
+        {
+            var child = new ChildEventAggregator(this.serviceProvider);
+            this.Subscribe(child);
+            return child;
         }
 
         public async Task PublishAsync<TMessage>() where TMessage : IMessage, new()

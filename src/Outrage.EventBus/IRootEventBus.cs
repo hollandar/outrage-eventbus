@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Outrage.EventBus
+﻿namespace Outrage.EventBus
 {
     public interface IRootEventBus: IEventAggregator
     {
