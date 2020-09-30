@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30517.126
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Outrage.EventBus", "src\Outrage.EventBus\Outrage.EventBus.csproj", "{DC21D192-D094-47D6-83A5-69A860DB4F86}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B4157DCC-61AB-421F-9377-796812625ACD}
+	EndGlobalSection
+EndGlobal
