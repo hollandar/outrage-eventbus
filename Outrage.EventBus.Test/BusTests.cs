@@ -144,6 +144,22 @@ namespace Outrage.EventBus.Test
         }
 
         /// <summary>
+        /// Test for a published message that supports new()
+        /// </summary>
+        /// <returns></returns>
+        [TestMethod]
+        public async Task InstancedSubscriberNotificationOnly()
+        {
+            var passed = false;
+            var eventBus = serviceProvider.GetService<IRootEventBus>();
+            var subscriber = eventBus.Subscribe<TypedMessage>(() => { passed = true; return Task.CompletedTask; });
+
+            await eventBus.PublishAsync<TypedMessage>();
+            await TestHelpers.DelayUntil(() => passed);
+            Assert.IsTrue(passed, "Message subscriber was not called.");
+        }
+
+        /// <summary>
         /// Test for a directly created subscriber, but with subscriber loss
         /// </summary>
         /// <returns></returns>

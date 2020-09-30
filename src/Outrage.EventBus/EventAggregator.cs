@@ -43,6 +43,11 @@ namespace Outrage.EventBus
             return subscriber;
         }
 
+        public ISubscriber Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage: IMessage
+        {
+            return this.Subscribe<TMessage>(async (context, message) => { await messageDelegate(); });
+        }
+
         public ISubscriber Subscribe(ISubscriber subscriber)
         {
             this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber));
