@@ -19,16 +19,16 @@ public class SomeMessage : IMessage {
 }
 ```
 
-3. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async to process messages of the type Outrage.EventBus.Messages.LogMessage.
+3. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
 
 ```
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
 var subscriber = rootEventBus.Subscribe<LogMessage>((busContext, logMessage) => {
-  Console.log($"Received log message containing {logMessage.Message");
+  Console.WriteLine($"Received log message containing {logMessage.Message");
   return Task.CompletedTask;
 });
 ```
-Note: You should hold a reference to the subscriber until you no longer wish to receive the messages.  The subscription it destroyed when the reference goes out of scope.  There is no need to deregister a subscriber.
+Note: You should hold a reference to the subscriber until you no longer wish to receive the messages.  The subscription is destroyed when the reference you hold goes out of scope.  There is no need to deregister a subscriber because all subscribers are held by the event bus as a weak reference.
 
 4. Post a message onto the bus.
 ```
@@ -39,7 +39,7 @@ rootEventBus.PublishAsync(new LogMessage("A message has been sent."));
 ```
 TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber;
 ```
-Attach a subscriber to the event bus, deriving the subscriber instance from dependency injection;
+Attach a subscriber to the event bus, constructing the subscriber instance using dependency injection;
 returns: The subscriber instance.
 
 ```
@@ -57,7 +57,7 @@ returns: the subscriber instance.
 ```
 ISubscriber Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage: IMessage;
 ```
-Subscribe using a method delegate or lambda function.  You do not receive the message instance, simply a notification that message of that type was received.
+Subscribe using a method delegate or lambda function.  You do not receive the message instance, simply a notification that a message of th type TMessage was received.
 returns: the subscriber instance.
 
 ```
@@ -65,8 +65,8 @@ ISubscriber Subscribe(ISubscriber subscriber);
 ```
 Subscribe by passing an instance of ISubscriber.  You can implement your own instance or utilize FilterSubscriber or InjectSubscriber.
 returns: the subscriber instance.
-FilterSubscriber: A subscriber that takes a method delegate ot lambda function and passes messages of a certain type on to it.
-InjectSubscriber: A subscriber that, on receipt of a message, delegate to a subscriber derived as a dependency.
+FilterSubscriber: A subscriber that takes a method delegate or lambda function and passes messages of a certain type on to it.
+InjectSubscriber: A subscriber that, on receipt of a message, delegates to a subscriber created using dependency injection.
 
 ## Bus Heirarchies
 A ChildEventAggregator is a special instance of the bus that receives messages from its parent bus, and republishes all messages within the child.  Messages published on the child bus are not propagated back to the parent.
