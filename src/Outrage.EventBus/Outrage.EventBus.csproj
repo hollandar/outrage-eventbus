@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <Version>0.0.2</Version>
+    <Version>0.0.3</Version>
     <Authors>Adrian Holland</Authors>
     <Company>Webefinity Pty Ltd</Company>
     <Description>A reusable and heirarchical event bus for dotnet core that hold weak references to subscribers, and publishes events through a threading channel</Description>
