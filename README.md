@@ -87,7 +87,7 @@ You can use subscribers and child buses to create orchestrations that:
 * orchestrate complex interactions between decoupled front and back end services;
 * subscribers that serialise messages and pass them across network boundaries;
 * encapsulate business logic into subscribers;
-* create processing changes by using message translation and reprocessing
+* create processing chains using follow-on messages published back to the bus
 * asynchronously initiate long running workloads; reporting responses once complete via response messages;
 
 ## Further examples
