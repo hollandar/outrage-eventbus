@@ -7,7 +7,9 @@ namespace Outrage.EventBus
 {
     public class FilterChildEventAggregator<TMessage> : EventAggregator, ISubscriber where TMessage: IMessage
     {
-        public virtual async Task HandleAsync(IMessage message)
+        public FilterChildEventAggregator(IServiceProvider serviceProvider) : base(serviceProvider) { }
+
+        public virtual async Task HandleAsync(EventContext context, IMessage message)
         {
             if (message is TMessage)
             {

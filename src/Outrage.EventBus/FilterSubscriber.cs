@@ -8,17 +8,17 @@ namespace Outrage.EventBus
 {
     public class FilterSubscriber<TMessage> : ISubscriber where TMessage : IMessage
     {
-        public FilterSubscriber(Func<TMessage, Task> onMessage)
+        public FilterSubscriber(Func<EventContext, TMessage, Task> onMessage)
         {
             this.onMessage = onMessage;
         }
-        protected Func<TMessage, Task> onMessage;
+        protected Func<EventContext, TMessage, Task> onMessage;
 
-        public async Task HandleAsync(IMessage message)
+        public async Task HandleAsync(EventContext context, IMessage message)
         {
             if (message is TMessage)
             {
-                await onMessage((TMessage)message);
+                await onMessage(context, (TMessage)message);
             }
         }
     }

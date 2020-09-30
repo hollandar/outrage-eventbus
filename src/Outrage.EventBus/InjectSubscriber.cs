@@ -1,22 +1,21 @@
-﻿using System;
+﻿using Microsoft.Extensions.DependencyInjection;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace Outrage.EventBus
 {
-    public class Subscriber : ISubscriber, IDisposable
+    public class InjectSubscriber<TSubscriber> : ISubscriber, IDisposable where TSubscriber: ISubscriber
     {
-        public Subscriber(Func<EventContext, IMessage, Task> onMessage)
+        public InjectSubscriber()
         {
-            this.onMessage = onMessage;
         }
-
-        Func<EventContext, IMessage, Task> onMessage;
 
         public async Task HandleAsync(EventContext context, IMessage message)
         {
-            await onMessage(context, message);
+            var subscriber = context.ServiceProvider.GetRequiredService<TSubscriber>();
+            await subscriber.HandleAsync(context, message);
         }
 
         public void Dispose()

@@ -7,7 +7,9 @@ namespace Outrage.EventBus
 {
     public class ChildEventAggregator : EventAggregator, ISubscriber
     {
-        public async Task HandleAsync(IMessage message)
+        public ChildEventAggregator(IServiceProvider serviceProvider) : base(serviceProvider) { }
+
+        public async Task HandleAsync(EventContext context, IMessage message)
         {
             await this.PublishAsync<IMessage>(message);
         }

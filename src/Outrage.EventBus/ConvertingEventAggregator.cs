@@ -7,7 +7,9 @@ namespace Outrage.EventBus
 {
     public abstract class ConvertingEventAggregator<TMessage, TOutMessage>: FilterChildEventAggregator<TOutMessage>, ISubscriber where TMessage: IMessage where TOutMessage: IMessage
     {
-        public override async Task HandleAsync(IMessage message)
+        public ConvertingEventAggregator(IServiceProvider serviceProvider) : base(serviceProvider) { }
+
+        public override async Task HandleAsync(EventContext context, IMessage message)
         {
             if (message is TMessage)
             {
