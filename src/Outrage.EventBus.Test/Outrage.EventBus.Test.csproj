@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\src\Outrage.EventBus\Outrage.EventBus.csproj" />
+    <ProjectReference Include="..\Outrage.EventBus\Outrage.EventBus.csproj" />
   </ItemGroup>
 
 </Project>
