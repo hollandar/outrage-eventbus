@@ -24,7 +24,7 @@ public class SomeMessage : IMessage {
 ```
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
 var subscriber = rootEventBus.Subscribe<LogMessage>((busContext, logMessage) => {
-  Console.WriteLine($"Received log message containing {logMessage.Message");
+  Console.WriteLine($"Received log message containing {logMessage.Message}");
   return Task.CompletedTask;
 });
 ```
