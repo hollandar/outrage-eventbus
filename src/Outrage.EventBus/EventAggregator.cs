@@ -69,7 +69,7 @@ namespace Outrage.EventBus
 
         public Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
         {
-            if (channelReaderTask == null) channelReaderTask = Task.Run(ProcessPublishQueue);
+            if (channelReaderTask == null || channelReaderTask.IsCompleted) channelReaderTask = Task.Run(ProcessPublishQueue);
             this.messageChannel.Writer.TryWrite(message);
             return Task.CompletedTask;
         }
@@ -80,43 +80,44 @@ namespace Outrage.EventBus
             List<Exception> exceptionsThrown = new List<Exception>();
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                var message = await this.messageChannel.Reader.ReadAsync();
-
-                var context = new EventContext { Bus = this, ServiceProvider = this.serviceProvider };
-                var index = 0;
-                while (index < subscribers.Count)
+                while (this.messageChannel.Reader.TryRead(out IMessage message))
                 {
-                    var subscriberReference = subscribers[index];
-                    if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                    var context = new EventContext { Bus = this, ServiceProvider = this.serviceProvider };
+                    var index = 0;
+                    while (index < subscribers.Count)
                     {
-                        try
+                        var subscriberReference = subscribers[index];
+                        if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
-                            await subscriber.HandleAsync(context, message);
+                            try
+                            {
+                                await subscriber.HandleAsync(context, message);
+                            }
+                            catch (Exception e)
+                            {
+                                if (e is ConvertableBusException)
+                                {
+                                    var convertableException = e as ConvertableBusException;
+                                    var convertedMessage = convertableException.Convert(message);
+                                    await this.PublishAsync(convertedMessage);
+                                }
+                                else
+                                {
+                                    // Hold exceptions thrown
+                                    exceptionsThrown.Add(e);
+                                }
+                            }
+                            index++;
                         }
-                        catch (Exception e)
+                        else
                         {
-                            if (e is ConvertableBusException)
-                            {
-                                var convertableException = e as ConvertableBusException;
-                                var convertedMessage = convertableException.Convert(message);
-                                await this.PublishAsync(convertedMessage);
-                            }
-                            else
-                            {
-                                // Hold exceptions thrown
-                                exceptionsThrown.Add(e);
-                            }
+                            subscribers.RemoveAt(index);
                         }
-                        index++;
-                    }
-                    else
-                    {
-                        subscribers.RemoveAt(index);
-                    }
 
-                    // Now throw any process exceptions as an aggregate
-                    if (exceptionsThrown.Any())
-                        throw new AggregateException(exceptionsThrown);
+                        // Now throw any process exceptions as an aggregate
+                        if (exceptionsThrown.Any())
+                            throw new AggregateException(exceptionsThrown);
+                    }
                 }
             }
         }
