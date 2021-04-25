@@ -7,19 +7,25 @@ A general purpose subscribe/publish event bus library that:
 * Supports parent/child streams for component specific orchestration
 
 ## Getting started
+1. Subclass a root event bus from Event Aggregator.  You can have multiple levels of event aggregator subscribed to different events through as many subclasses of event aggregator as you need.
+```
+public class RootEventBus: EventAggregator, IRootEventBus {
+  public RootEventBus(IServiceProvider serviceProvider) : base(serviceProvider) {}
+}
+```
 
-1. Inject a root event bus using the IRootEventBus marker interface
+2. Inject the root event bus into the dependency injection service collection using the IRootEventBus marker interface
 ```
 serviceCollection.AddScoped<IRootEventBus, EventAggregator>();
 ```
 
-2. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
+3. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
 ```
 public class SomeMessage : IMessage {
 }
 ```
 
-3. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
+4. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
 
 ```
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
