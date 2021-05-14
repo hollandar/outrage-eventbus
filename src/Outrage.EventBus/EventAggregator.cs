@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,6 +12,7 @@ namespace Outrage.EventBus
     public abstract class EventAggregator : IEventAggregator, IDisposable
     {
         private readonly IServiceProvider serviceProvider;
+        private readonly ILogger<EventAggregator> logger;
         private readonly List<WeakReference<ISubscriber>> subscribers = new List<WeakReference<ISubscriber>>();
         private readonly Channel<IMessage> messageChannel = Channel.CreateUnbounded<IMessage>();
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
@@ -20,6 +22,7 @@ namespace Outrage.EventBus
         protected EventAggregator(IServiceProvider serviceProvider)
         {
             this.serviceProvider = serviceProvider;
+            this.logger = this.serviceProvider.GetService<ILogger<EventAggregator>>();
         }
 
         public TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber
@@ -69,8 +72,12 @@ namespace Outrage.EventBus
 
         public Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
         {
-            if (channelReaderTask == null || channelReaderTask.IsCompleted) channelReaderTask = Task.Run(ProcessPublishQueue);
-            this.messageChannel.Writer.TryWrite(message);
+            if (this.logger != null)
+                this.logger.LogDebug($"Enqueueing message {message.GetType().FullName}.");
+
+            if (this.messageChannel.Writer.TryWrite(message))
+                if (channelReaderTask == null || channelReaderTask.IsCompleted)
+                    channelReaderTask = Task.Run(ProcessPublishQueue);
             return Task.CompletedTask;
         }
 
@@ -95,6 +102,9 @@ namespace Outrage.EventBus
                             }
                             catch (Exception e)
                             {
+                                if (this.logger != null)
+                                    this.logger.LogWarning(e, $"Event chain faulted with exception {e.Message}.");
+
                                 if (e is ConvertableBusException)
                                 {
                                     var convertableException = e as ConvertableBusException;
