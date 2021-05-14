@@ -19,6 +19,8 @@ namespace Outrage.EventBus
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
+        ISubscriber exceptionSubscriber;
+        ISubscriber logSubscriber;
 
         private Task channelReaderTask = null;
 
@@ -140,8 +142,7 @@ namespace Outrage.EventBus
             }
         }
 
-        ISubscriber exceptionSubscriber;
-        public void AddDefaultExceptionListener(string msg = "Exception thrown processing event chain.")
+        public void AddDefaultExceptionSubscriber(string msg = "Exception thrown processing event chain.")
         {
             if (this.logger == null)
             {
@@ -155,8 +156,9 @@ namespace Outrage.EventBus
             this.logExceptionEnabled = true;
         }
 
-        ISubscriber logSubscriber;
-        public void AddDefaultLogListener()
+        public void AddExceptionPublisher() => this.logExceptionEnabled = true;
+
+        public void AddDefaultLogSubscriber()
         {
             if (this.logger == null)
             {
@@ -169,7 +171,8 @@ namespace Outrage.EventBus
             });
             this.logEnabled = true;
         }
-
+        
+        public void AddLoggingPublisher() => this.logEnabled = true;
 
         public void Dispose()
         {

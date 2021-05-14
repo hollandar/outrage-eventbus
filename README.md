@@ -74,6 +74,22 @@ returns: the subscriber instance.
 FilterSubscriber: A subscriber that takes a method delegate or lambda function and passes messages of a certain type on to it.
 InjectSubscriber: A subscriber that, on receipt of a message, delegates to a subscriber created using dependency injection.
 
+## Event Logging
+Event logging can be enabled via the standard Microsoft.Extensions.Logging.Abstractions interface ILogger.  In order to enable logging, add calls to the following methods to your subclass of EventAggregator;
+* AddDefaultExceptionSubscriber() - Enable the generation of exception messages of type EventBusExceptionMessage, and wire up a subscriber that logs via logger.LogError.
+* AddDefaultLoggingSubscriber() - Enable the generation of logging messages of type EventBusLogMessage, and wire up a subscriber that logs via logger.Log(LogLevel, Message).
+* AddExceptionPublisher() - Enable the raising of EventBusExceptionMessage, but you will need to wire up your own custom subscriber.
+* AddLoggingPublisher() - Enable the raising of EventBusLogMessage, but you will need to wire up your own custom subscriber.
+
+Following, an example EventAggregator subclass that makes use of default logging:
+```
+public StateEventAggregator(IServiceProvider serviceProvider):base (serviceProvider)
+{
+  this.AddDefaultExceptionSubscriber();
+  this.AddDefaultLogSubscriber();
+}
+```
+
 ## Bus Heirarchies
 A ChildEventAggregator is a special instance of the bus that receives messages from its parent bus, and republishes all messages within the child.  Messages published on the child bus are not propagated back to the parent.
 
