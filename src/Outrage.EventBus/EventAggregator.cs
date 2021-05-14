@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Outrage.EventBus.Messages;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,6 +17,8 @@ namespace Outrage.EventBus
         private readonly List<WeakReference<ISubscriber>> subscribers = new List<WeakReference<ISubscriber>>();
         private readonly Channel<IMessage> messageChannel = Channel.CreateUnbounded<IMessage>();
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
+        private bool logEnabled = false;
+        private bool logExceptionEnabled = false;
 
         private Task channelReaderTask = null;
 
@@ -46,7 +49,7 @@ namespace Outrage.EventBus
             return subscriber;
         }
 
-        public ISubscriber Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage: IMessage
+        public ISubscriber Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage : IMessage
         {
             return this.Subscribe<TMessage>(async (context, message) => { await messageDelegate(); });
         }
@@ -72,8 +75,8 @@ namespace Outrage.EventBus
 
         public Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
         {
-            if (this.logger != null)
-                this.logger.LogDebug($"Enqueueing message {message.GetType().FullName}.");
+            if (logEnabled)
+                this.messageChannel.Writer.TryWrite(new EventBusLogMessage() { Level = LogLevel.Debug, Message = $"Message published with type {message.GetType().FullName }." });
 
             if (this.messageChannel.Writer.TryWrite(message))
                 if (channelReaderTask == null || channelReaderTask.IsCompleted)
@@ -89,6 +92,9 @@ namespace Outrage.EventBus
             {
                 while (this.messageChannel.Reader.TryRead(out IMessage message))
                 {
+                    // Starting a new message, clear out the list of exceptions
+                    exceptionsThrown.Clear();
+
                     var context = new EventContext { Bus = this, ServiceProvider = this.serviceProvider };
                     var index = 0;
                     while (index < subscribers.Count)
@@ -102,9 +108,6 @@ namespace Outrage.EventBus
                             }
                             catch (Exception e)
                             {
-                                if (this.logger != null)
-                                    this.logger.LogWarning(e, $"Event chain faulted with exception {e.Message}.");
-
                                 if (e is ConvertableBusException)
                                 {
                                     var convertableException = e as ConvertableBusException;
@@ -123,16 +126,51 @@ namespace Outrage.EventBus
                         {
                             subscribers.RemoveAt(index);
                         }
+                    }
 
-                        // Now throw any process exceptions as an aggregate
-                        if (exceptionsThrown.Any())
-                            throw new AggregateException(exceptionsThrown);
+                    // Now throw any process exceptions as an aggregate
+                    if (exceptionsThrown.Any() && logExceptionEnabled)
+                    {
+                        await this.PublishAsync<EventBusExceptionMessage>(new EventBusExceptionMessage
+                        {
+                            Exception = new AggregateException(exceptionsThrown)
+                        });
                     }
                 }
             }
         }
 
-        
+        ISubscriber exceptionSubscriber;
+        public void AddDefaultExceptionListener(string msg = "Exception thrown processing event chain.")
+        {
+            if (this.logger == null)
+            {
+                throw new LoggerNotInjectedException("Adding default exception logging, no logging endpoint has been injected.");
+            }
+            this.exceptionSubscriber = this.Subscribe<EventBusExceptionMessage>((eventContext, eventMessage) =>
+            {
+                this.logger.LogError(eventMessage.Exception, msg ?? eventMessage.Exception.Message);
+                return Task.CompletedTask;
+            });
+            this.logExceptionEnabled = true;
+        }
+
+        ISubscriber logSubscriber;
+        public void AddDefaultLogListener()
+        {
+            if (this.logger == null)
+            {
+                throw new LoggerNotInjectedException("Adding default logging, no logging endpoint has been injected.");
+            }
+            this.logSubscriber = this.Subscribe<EventBusLogMessage>((eventContext, eventMessage) =>
+            {
+                this.logger.Log(eventMessage.Level, eventMessage.Message);
+                return Task.CompletedTask;
+            });
+            this.logEnabled = true;
+        }
+
+
         public void Dispose()
         {
             this.Dispose(true);
