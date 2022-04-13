@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Outrage.EventBus.Messages;
+using Outrage.EventBus.Options;
+using Outrage.EventBus.Predefined;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,21 +15,29 @@ namespace Outrage.EventBus
     public abstract class EventAggregator : IEventAggregator, IDisposable
     {
         private readonly IServiceProvider serviceProvider;
-        private readonly ILogger<EventAggregator> logger;
+        private readonly ILogger<EventAggregator>? logger;
         private readonly List<WeakReference<ISubscriber>> subscribers = new List<WeakReference<ISubscriber>>();
         private readonly Channel<IMessage> messageChannel = Channel.CreateUnbounded<IMessage>();
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
-        ISubscriber exceptionSubscriber;
-        ISubscriber logSubscriber;
+        ISubscriber? exceptionSubscriber;
+        ISubscriber? logSubscriber;
 
-        private Task channelReaderTask = null;
+        private Task? channelReaderTask = null;
 
         protected EventAggregator(IServiceProvider serviceProvider)
         {
             this.serviceProvider = serviceProvider;
             this.logger = this.serviceProvider.GetService<ILogger<EventAggregator>>();
+            var options = this.serviceProvider.GetService<EventBusOptions>();
+            if (options != null)
+            {
+                if (options.DefaultExceptionSubscriber) this.AddDefaultExceptionSubscriber(options.DefaultExceptionMessage);
+                if (options.DefaultLoggingSubscriber) this.AddDefaultLogSubscriber();
+                if (options.ExceptionPublisher) this.AddExceptionPublisher();
+                if (options.LoggingPublisher) this.AddLoggingPublisher();
+            }
         }
 
         public TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber
@@ -58,7 +68,7 @@ namespace Outrage.EventBus
 
         public ISubscriber Subscribe(ISubscriber subscriber)
         {
-            this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber));
+            this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber, false));
             return subscriber;
         }
 
@@ -92,12 +102,12 @@ namespace Outrage.EventBus
             List<Exception> exceptionsThrown = new List<Exception>();
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                while (this.messageChannel.Reader.TryRead(out IMessage message))
+                while (this.messageChannel.Reader.TryRead(out IMessage? message))
                 {
                     // Starting a new message, clear out the list of exceptions
                     exceptionsThrown.Clear();
 
-                    var context = new EventContext { Bus = this, ServiceProvider = this.serviceProvider };
+                    var context = new EventContext(this, this.serviceProvider);
                     var index = 0;
                     while (index < subscribers.Count)
                     {
@@ -113,7 +123,7 @@ namespace Outrage.EventBus
                                 if (e is ConvertableBusException)
                                 {
                                     var convertableException = e as ConvertableBusException;
-                                    var convertedMessage = convertableException.Convert(message);
+                                    var convertedMessage = convertableException!.Convert(message);
                                     await this.PublishAsync(convertedMessage);
                                 }
                                 else
@@ -133,10 +143,9 @@ namespace Outrage.EventBus
                     // Now throw any process exceptions as an aggregate
                     if (exceptionsThrown.Any() && logExceptionEnabled)
                     {
-                        await this.PublishAsync<EventBusExceptionMessage>(new EventBusExceptionMessage
-                        {
-                            Exception = new AggregateException(exceptionsThrown)
-                        });
+                        await this.PublishAsync<EventBusExceptionMessage>(
+                            new EventBusExceptionMessage (new AggregateException(exceptionsThrown))
+                        );
                     }
                 }
             }
@@ -146,7 +155,7 @@ namespace Outrage.EventBus
         {
             if (this.logger == null)
             {
-                throw new LoggerNotInjectedException("Adding default exception logging, no logging endpoint has been injected.");
+                throw new LoggerNotInjectedException("Adding default exception logging, no logging service has been injected.");
             }
             this.exceptionSubscriber = this.Subscribe<EventBusExceptionMessage>((eventContext, eventMessage) =>
             {
@@ -162,7 +171,7 @@ namespace Outrage.EventBus
         {
             if (this.logger == null)
             {
-                throw new LoggerNotInjectedException("Adding default logging, no logging endpoint has been injected.");
+                throw new LoggerNotInjectedException("Adding default logging, no logging service has been injected.");
             }
             this.logSubscriber = this.Subscribe<EventBusLogMessage>((eventContext, eventMessage) =>
             {
@@ -171,7 +180,7 @@ namespace Outrage.EventBus
             });
             this.logEnabled = true;
         }
-        
+
         public void AddLoggingPublisher() => this.logEnabled = true;
 
         public void Dispose()

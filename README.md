@@ -3,22 +3,20 @@
 A general purpose subscribe/publish event bus library that:
 * Uses a thread channel to orchestrate message execution
 * Supports dependency injection via Microsoft.Extensions.DependencyInjection
-* Employs weak references, which are especially useful for UI orchestration; no deregistering subscriptions
+* Employs weak references, which are especially useful for UI orchestration; no deregistering subscriptions or unsubscribing delegates on disposal
 * Supports parent/child streams for component specific orchestration
+* Handles exceptions and logging during event processing
 
 ## Getting started
-1. Subclass a root event bus from Event Aggregator.  You can have multiple levels of event aggregator subscribed to different events through as many subclasses of event aggregator as you need.
-```
-public class RootEventBus: EventAggregator, IRootEventBus {
-  public RootEventBus(IServiceProvider serviceProvider) : base(serviceProvider) {}
-}
-```
 
-2. Inject the root event bus into the dependency injection service collection using the IRootEventBus marker interface
+1. Inject the root event bus into the dependency injection service collection using the IRootEventBus marker interface
 ```
-serviceCollection.AddScoped<IRootEventBus, EventAggregator>();
+serviceCollection.AddScoped<IRootEventBus, Outrage.EventBus.Predefined.RootEventBus>();
 ```
-
+You can also add it using the AddDefaultRootBus call when setting options via the startup extension 
+```
+services.AddEventBus((options) => { options.AddRootBus(); });
+```
 3. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
 ```
 public class SomeMessage : IMessage {
@@ -74,8 +72,27 @@ returns: the subscriber instance.
 FilterSubscriber: A subscriber that takes a method delegate or lambda function and passes messages of a certain type on to it.
 InjectSubscriber: A subscriber that, on receipt of a message, delegates to a subscriber created using dependency injection.
 
+## Options
+
+When using the default setup extensions, you can configure several options using the options action:
+```
+services.AddEventBus((options) => {
+  options...
+});
+```
+
+1. options.UseDefaultExceptionSubscriber() - Add a default exception subscriber to all event buses.
+2. options.UseDefaultLoggingSubscriber() - Add the default handler for receipt of EventBusLogMessage messages.
+3. options.AddExceptionPublisher() - Add an exception logger which automatically logs exceptions during event bus processing, by publishing EventBusExceptionMessage's back onto the event bus.
+4. options.AddLoggingPublisher() - Log receipt of all messages by publishing an EventBusLogMessage back onto the event bus that received that message.
+5. options.AddDefaultRootBus() - Register a singleton instance of RootEventBus as IRootEventBus.
+6. options.AddDefaultClientBus() - Register a singleton instance of ClientEventBus as IClientEventBus, linked to the IRootEventBus which must also be registered.
+7. options.SetDefaultExceptionMessage() - Set the default message for exception logging when no other message is available.
+
+
 ## Event Logging
-Event logging can be enabled via the standard Microsoft.Extensions.Logging.Abstractions interface ILogger.  In order to enable logging, add calls to the following methods to your subclass of EventAggregator;
+Event logging can be enabled via the standard Microsoft.Extensions.Logging.Abstractions interface ILogger.  In order to enable logging, add calls to the following methods to your subclass of EventAggregator; or set appropriate setting when you call serviceCollection.AddEventBus()
+
 * AddDefaultExceptionSubscriber() - Enable the generation of exception messages of type EventBusExceptionMessage, and wire up a subscriber that logs via logger.LogError.
 * AddDefaultLoggingSubscriber() - Enable the generation of logging messages of type EventBusLogMessage, and wire up a subscriber that logs via logger.Log(LogLevel, Message).
 * AddExceptionPublisher() - Enable the raising of EventBusExceptionMessage, but you will need to wire up your own custom subscriber.
@@ -100,6 +117,12 @@ IEventAggregator CreateChildBus();
 ```  
 
 A great use-case from a child bus is to drive the user interface of a component section of an application, in concert with the application root bus.  For example, you could publish log messages into the Root bus (they will also be received by the ui child bus); and toast message events into the ui child bus exclusively for presentation in the user interface.  Because the event buses utilize a threading channel, you may need to marshal child subscribers to the ui thread at runtime.
+
+## Support
+
+Outrage.EventBus works in all forms of .Net Standard 2.1, and in all known frameworks, especially:
+* Blazor Server - as a means of connecting otherwise disconnected components, such as toast components.
+* Blazor Web Assembly - yes, it has the same support as BlazorServer.
 
 ## Ideas
 You can use subscribers and child buses to create orchestrations that:

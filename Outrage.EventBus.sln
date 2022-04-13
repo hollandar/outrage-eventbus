@@ -5,7 +5,9 @@ VisualStudioVersion = 16.0.30517.126
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Outrage.EventBus", "src\Outrage.EventBus\Outrage.EventBus.csproj", "{DC21D192-D094-47D6-83A5-69A860DB4F86}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Outrage.EventBus.Test", "src\Outrage.EventBus.Test\Outrage.EventBus.Test.csproj", "{DEEF8EA8-AD94-4256-AB0D-9BD4A96FA3E8}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Outrage.EventBus.Test", "tests\Outrage.EventBus.Test\Outrage.EventBus.Test.csproj", "{DEEF8EA8-AD94-4256-AB0D-9BD4A96FA3E8}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "_build", "build\_build.csproj", "{4E155438-3655-4657-B1AC-24E92D4578B4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -13,6 +15,8 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4E155438-3655-4657-B1AC-24E92D4578B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4E155438-3655-4657-B1AC-24E92D4578B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DC21D192-D094-47D6-83A5-69A860DB4F86}.Release|Any CPU.ActiveCfg = Release|Any CPU

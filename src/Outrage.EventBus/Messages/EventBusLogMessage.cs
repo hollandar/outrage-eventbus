@@ -7,7 +7,12 @@ namespace Outrage.EventBus.Messages
 {
     public class EventBusLogMessage: IMessage
     {
-        public LogLevel Level { get; set; } = LogLevel.Debug;
+        public EventBusLogMessage()
+        {
+            this.Level = LogLevel.Debug;
+            this.Message = String.Empty;
+        }
+        public LogLevel Level { get; set; }
         public string Message { get; set; }
     }
 }

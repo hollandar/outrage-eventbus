@@ -9,11 +9,12 @@ namespace Outrage.EventBus.Messages
     public class FailureMessage : IMessage
     {
         public List<string> Messages { get; } = new List<string>();
-        public Exception InnerException { get; set; }
+        public Exception? InnerException { get; set; }
 
         public FailureMessage(params string[] messages)
         {
             this.Messages.AddRange(messages);
+            this.InnerException = null;
         }
 
         public FailureMessage(Exception innerException, params string[] messages) : this(messages)
