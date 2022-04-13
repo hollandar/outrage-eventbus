@@ -4,3 +4,4 @@ packages/
 .vs
 .nuke/temp
 output/
+**/*.csproj.user
