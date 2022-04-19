@@ -17,13 +17,13 @@ You can also add it using the AddDefaultRootBus call when setting options via th
 ```c#
 services.AddEventBus((options) => { options.AddRootBus(); });
 ```
-3. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
+2. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
 ```c#
 public class SomeMessage : IMessage {
 }
 ```
 
-4. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
+3. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
 
 ```c#
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
