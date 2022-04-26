@@ -10,22 +10,22 @@ A general purpose subscribe/publish event bus library that:
 ## Getting started
 
 1. Inject the root event bus into the dependency injection service collection using the IRootEventBus marker interface
-```
+```c#
 serviceCollection.AddScoped<IRootEventBus, Outrage.EventBus.Predefined.RootEventBus>();
 ```
 You can also add it using the AddDefaultRootBus call when setting options via the startup extension 
-```
+```c#
 services.AddEventBus((options) => { options.AddRootBus(); });
 ```
-3. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
-```
+2. Create a message class, or reuse the standard messages classes from Outrage.EventBus.Messages.  Messages should inherit the marker interface IMessage.
+```c#
 public class SomeMessage : IMessage {
 }
 ```
 
-4. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
+3. Subscribe to a message using one of the Subscribe methods.  The following uses an inline async lambda to process messages of the type Outrage.EventBus.Messages.LogMessage.
 
-```
+```c#
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
 var subscriber = rootEventBus.Subscribe<LogMessage>((busContext, logMessage) => {
   Console.WriteLine($"Received log message containing {logMessage.Message}");
@@ -35,36 +35,36 @@ var subscriber = rootEventBus.Subscribe<LogMessage>((busContext, logMessage) => 
 Note: You should hold a reference to the subscriber until you no longer wish to receive the messages.  The subscription is destroyed when the reference you hold goes out of scope.  There is no need to deregister a subscriber because all subscribers are held by the event bus as a weak reference.
 
 4. Post a message onto the bus.
-```
+```c#
 var rootEventBus = serviceProvider.GetService<IRootEventBus>();
 rootEventBus.PublishAsync(new LogMessage("A message has been sent."));
 ```
 ## Subscribe Methods
-```
+```c#
 TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber;
 ```
 Attach a subscriber to the event bus, constructing the subscriber instance using dependency injection;
 returns: The subscriber instance.
 
-```
+```c#
 FilterSubscriber<TMessage> Subscribe<TMessage>(Func<EventContext, TMessage, Task> messageDelegate, bool subscribed = true) where TMessage : IMessage;
 ```
 Subscribe using a method delegate or lambda function, filtering for certain types of message;
 returns: the subscriber instance.
 
-```
+```c#
 ISubscriber Subscribe(Func<EventContext, IMessage, Task> messageDelegate, bool subscribed = true);
 ```
 Subscribe using a method delegate or lambda function, to messages of all types.  You should filter for types of messages by testing message is MessageClass or similar;
 returns: the subscriber instance.
 
-```
+```c#
 ISubscriber Subscribe<TMessage>(Func<Task> messageDelegate, bool subscribed = true) where TMessage: IMessage;
 ```
 Subscribe using a method delegate or lambda function.  You do not receive the message instance, simply a notification that a message of th type TMessage was received.
 returns: the subscriber instance.
 
-```
+```c#
 ISubscriber Subscribe(ISubscriber subscriber);
 ```
 Subscribe by passing an instance of ISubscriber.  You can implement your own instance or utilize FilterSubscriber or InjectSubscriber.
@@ -75,7 +75,7 @@ InjectSubscriber: A subscriber that, on receipt of a message, delegates to a sub
 ## Options
 
 When using the default setup extensions, you can configure several options using the options action:
-```
+```c#
 services.AddEventBus((options) => {
   options...
 });
@@ -99,7 +99,7 @@ Event logging can be enabled via the standard Microsoft.Extensions.Logging.Abstr
 * AddLoggingPublisher() - Enable the raising of EventBusLogMessage, but you will need to wire up your own custom subscriber.
 
 Following, an example EventAggregator subclass that makes use of default logging:
-```
+```c#
 public StateEventAggregator(IServiceProvider serviceProvider):base (serviceProvider)
 {
   this.AddDefaultExceptionSubscriber();
@@ -112,7 +112,7 @@ A ChildEventAggregator is a special instance of the bus that receives messages f
 
 You can either create a general purpose child bus, or derive from ChildEventAggregator to create a specific bus and resolve it using dependency injection.
 The CreateChildBus method provides a general bus that is a child to the one from which it was created.
-```
+```c#
 IEventAggregator CreateChildBus();
 ```  
 
