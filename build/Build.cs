@@ -24,7 +24,7 @@ class Build : NukeBuild
     ///   - Microsoft VisualStudio     https://nuke.build/visualstudio
     ///   - Microsoft VSCode           https://nuke.build/vscode
 
-    const string semVer = "1.0.0";
+    const string semVer = "1.0.1";
     const string suffixVer = "";
 
     public static int Main () => Execute<Build>(x => x.Compile);

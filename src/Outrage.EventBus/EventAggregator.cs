@@ -72,6 +72,22 @@ namespace Outrage.EventBus
             return subscriber;
         }
 
+        public void Unsubscribe(ISubscriber subscriberTarget)
+        {
+            var references = this.subscribers.Where(reference =>
+            {
+                if (reference.TryGetTarget(out var subscriber))
+                {
+                    return subscriber == subscriberTarget;
+                }
+
+                return false;
+            }).ToList();
+
+            foreach (var subscriberReference in references)
+                this.subscribers.Remove(subscriberReference);
+        }
+
         public IEventAggregator CreateChildBus()
         {
             var child = new ChildEventAggregator(this.serviceProvider);

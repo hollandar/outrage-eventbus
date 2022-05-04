@@ -190,5 +190,33 @@ namespace Outrage.EventBus.Test
             await test();
         }
 
+        /// <summary>
+        /// Test for a directly created subscriber, but with subscriber loss
+        /// </summary>
+        /// <returns></returns>
+        [TestMethod]
+        public async Task Unsubscribe()
+        {
+            var eventBus = serviceProvider.GetService<IRootEventBus>();
+
+            Action subscribe = () =>
+            {
+                var subscriber = new InternalSubscriber();
+                eventBus.Subscribe(subscriber);
+                eventBus.Unsubscribe(subscriber);
+            };
+
+            subscribe();
+
+            Func<Task> test = async () =>
+            {
+                await eventBus.PublishAsync(new LogMessage("test"));
+                await TestHelpers.DelayUntil(() => InternalSubscriber.LastMessage is LogMessage);
+                Assert.IsFalse(InternalSubscriber.LastMessage is LogMessage, "Message subscriber was called.");
+            };
+
+            await test();
+        }
+
     }
 }

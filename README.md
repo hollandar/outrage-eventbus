@@ -118,6 +118,22 @@ IEventAggregator CreateChildBus();
 
 A great use-case from a child bus is to drive the user interface of a component section of an application, in concert with the application root bus.  For example, you could publish log messages into the Root bus (they will also be received by the ui child bus); and toast message events into the ui child bus exclusively for presentation in the user interface.  Because the event buses utilize a threading channel, you may need to marshal child subscribers to the ui thread at runtime.
 
+## Unsubscribe
+
+There are use cases where you will need to unsubscribe on dispose, especially when your response to a subscription has side effects and you dont want it processed after the handler is disposed.  Given the event bus you are subscribed to, just unsubscribe your subscriber.
+
+```c#
+var subscriber = eventBus.Subscribe<SomeMessage>((context, message) => {
+  Console.Writeline(message.Message);
+});
+eventBus.Subscribe(subscriber);
+
+// Later, on dispose
+eventBus.Unsubscribe(subscriber);
+```
+
+Where you unsubscribe will depend upon your use case.  As an example, in a Blazor page, you should unsubscribe on disposal, the instance may not be cleaned up until some time later.
+
 ## Support
 
 Outrage.EventBus works in all forms of .Net Standard 2.1, and in all known frameworks, especially:

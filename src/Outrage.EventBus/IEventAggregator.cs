@@ -15,5 +15,6 @@ namespace Outrage.EventBus
         Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage;
         Task PublishAsync<TMessage>() where TMessage : IMessage, new();
         ISubscriber Subscribe(ISubscriber subscriber);
+        void Unsubscribe(ISubscriber subscriber);
     }
 }
