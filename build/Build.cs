@@ -10,11 +10,9 @@ using Nuke.Common.Tooling;
 using Nuke.Common.Tools.DotNet;
 using Nuke.Common.Utilities.Collections;
 using static Nuke.Common.EnvironmentInfo;
-using static Nuke.Common.IO.FileSystemTasks;
 using static Nuke.Common.IO.PathConstruction;
 using static Nuke.Common.Tools.DotNet.DotNetTasks;
 
-[CheckBuildProjectConfigurations]
 [ShutdownDotNetAfterServerBuild]
 class Build : NukeBuild
 {
@@ -24,7 +22,7 @@ class Build : NukeBuild
     ///   - Microsoft VisualStudio     https://nuke.build/visualstudio
     ///   - Microsoft VSCode           https://nuke.build/vscode
 
-    const string semVer = "1.0.1";
+    const string semVer = "1.0.2";
     const string suffixVer = "";
 
     public static int Main () => Execute<Build>(x => x.Compile);
@@ -47,9 +45,9 @@ class Build : NukeBuild
         .Before(Restore)
         .Executes(() =>
         {
-            SourceDirectory.GlobDirectories("**/bin", "**/obj").ForEach(DeleteDirectory);
-            TestsDirectory.GlobDirectories("**/bin", "**/obj").ForEach(DeleteDirectory);
-            EnsureCleanDirectory(OutputDirectory);
+            SourceDirectory.GlobDirectories("**/bin", "**/obj").ForEach(dir => dir.DeleteDirectory());
+            TestsDirectory.GlobDirectories("**/bin", "**/obj").ForEach(dir => dir.DeleteDirectory());
+            OutputDirectory.CreateOrCleanDirectory();
         });
 
     Target Restore => _ => _
@@ -73,7 +71,7 @@ class Build : NukeBuild
            .DependsOn(Compile)
            .Executes(() =>
            {
-               EnsureCleanDirectory(NugetDirectory);
+               NugetDirectory.CreateOrCleanDirectory();
                foreach (var project in Solution.AllProjects)
                {
                    if (project.GetProperty<bool>("IsPackable"))
@@ -81,7 +79,8 @@ class Build : NukeBuild
                        DotNetPack(s => s
                            .EnableNoBuild()
                            .SetProject(project)
-                           .SetVersionPrefix(semVer)
+						   .SetConfiguration(Configuration)
+						   .SetVersionPrefix(semVer)
                            .SetVersionSuffix(suffixVer)
                            .SetOutputDirectory(NugetDirectory)
                        );
@@ -93,19 +92,21 @@ class Build : NukeBuild
     .DependsOn(Pack)
     .Executes(() =>
     {
-        foreach (var nugetPackage in GlobFiles(NugetDirectory, "*.nupkg"))
+        foreach (var nugetPackage in NugetDirectory.GlobFiles("*.nupkg"))
         {
             Console.WriteLine(nugetPackage);
             DotNetNuGetPush(s => s
                 .SetTargetPath(nugetPackage)
-                .When(Configuration != Configuration.Release, s => s
-                    .SetSource("outrage")
-                    .SetProcessArgumentConfigurator(a => a.Add("-k {0}", ApiKey))
+                .When(_ => Configuration != Configuration.Release, s => s
+                    .SetSource("local feed")
+                    //.AddProcessAdditionalArguments($"-k {ApiKey}")
+                    //.SetSource("outrage")
+                    //.AddProcessAdditionalArguments($"-k {ApiKey}")
                 )
-                .When(Configuration == Configuration.Release, s => s
+                .When(_ => Configuration == Configuration.Release, s => s
                     .SetSource("nuget.org")
-                    .SetProcessArgumentConfigurator(a => a.Add("-k {0}", ApiKey))
-                )
+					.AddProcessAdditionalArguments($"-k {ApiKey}")
+				)
             );
         }
     });

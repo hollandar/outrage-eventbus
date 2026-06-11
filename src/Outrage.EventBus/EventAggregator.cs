@@ -2,7 +2,6 @@
 using Microsoft.Extensions.Logging;
 using Outrage.EventBus.Messages;
 using Outrage.EventBus.Options;
-using Outrage.EventBus.Predefined;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,8 +15,9 @@ namespace Outrage.EventBus
     {
         private readonly IServiceProvider serviceProvider;
         private readonly ILogger<EventAggregator>? logger;
-        private readonly List<WeakReference<ISubscriber>> subscribers = new List<WeakReference<ISubscriber>>();
-        private readonly Channel<IMessage> messageChannel = Channel.CreateUnbounded<IMessage>();
+        private readonly List<WeakReference<ISubscriber>> subscribers;
+        private readonly Queue<WeakReference<ISubscriber>> deleteQueue;
+        private Channel<IMessage> messageChannel;
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
@@ -26,8 +26,25 @@ namespace Outrage.EventBus
 
         private Task? channelReaderTask = null;
 
-        protected EventAggregator(IServiceProvider serviceProvider)
+		private readonly object _subscribersLockObject = new object();
+		private readonly object _messageChannelLockObject = new object();
+		private readonly object _deleteQueueLockObject = new object();
+
+		protected EventAggregator(IServiceProvider serviceProvider)
         {
+			lock (_subscribersLockObject)
+			{
+				this.subscribers = new List<WeakReference<ISubscriber>>();
+			}
+			lock (_messageChannelLockObject)
+			{
+				this.messageChannel = Channel.CreateUnbounded<IMessage>();
+			}
+            lock (_deleteQueueLockObject)
+            {
+                this.deleteQueue = new Queue<WeakReference<ISubscriber>>();
+            }
+			
             this.serviceProvider = serviceProvider;
             this.logger = this.serviceProvider.GetService<ILogger<EventAggregator>>();
             var options = this.serviceProvider.GetService<EventBusOptions>();
@@ -38,7 +55,7 @@ namespace Outrage.EventBus
                 if (options.ExceptionPublisher) this.AddExceptionPublisher();
                 if (options.LoggingPublisher) this.AddLoggingPublisher();
             }
-        }
+		}
 
         public TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber
         {
@@ -68,27 +85,36 @@ namespace Outrage.EventBus
 
         public ISubscriber Subscribe(ISubscriber subscriber)
         {
-            this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber, false));
+            lock (_subscribersLockObject)
+            {
+                this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber, false));
+            }
             return subscriber;
         }
 
         public void Unsubscribe(ISubscriber subscriberTarget)
         {
-            var references = this.subscribers.Where(reference =>
+            lock (_subscribersLockObject)
             {
-                if (reference.TryGetTarget(out var subscriber))
-                {
-                    return subscriber == subscriberTarget;
-                }
+				var references = this.subscribers.Where(reference =>
+				{
+					if (reference.TryGetTarget(out var subscriber))
+					{
+						return subscriber == subscriberTarget;
+					}
 
-                return false;
-            }).ToList();
+					return false;
+				}).ToList();
 
-            foreach (var subscriberReference in references)
-                this.subscribers.Remove(subscriberReference);
-        }
+				lock (_deleteQueueLockObject)
+				{
+					foreach (var subscriberReference in references)
+						this.deleteQueue.Enqueue(subscriberReference);
+				}
+			}
+		}
 
-        public IEventAggregator CreateChildBus()
+		public IEventAggregator CreateChildBus()
         {
             var child = new ChildEventAggregator(this.serviceProvider);
             this.Subscribe(child);
@@ -107,8 +133,19 @@ namespace Outrage.EventBus
                 this.messageChannel.Writer.TryWrite(new EventBusLogMessage() { Level = LogLevel.Debug, Message = $"Message published with type {message.GetType().FullName }." });
 
             if (this.messageChannel.Writer.TryWrite(message))
+            {
                 if (channelReaderTask == null || channelReaderTask.IsCompleted)
                     channelReaderTask = Task.Run(ProcessPublishQueue);
+            }
+            else
+            {
+                // message channel writer has been marked as completed, recreate a new message channel
+                lock(_messageChannelLockObject)
+                {
+                    messageChannel = Channel.CreateUnbounded<IMessage>();
+				}
+                this.logger?.LogWarning("EventBus channel was recreated after the channel writer was closed");
+			}
             return Task.CompletedTask;
         }
 
@@ -127,8 +164,11 @@ namespace Outrage.EventBus
                     var index = 0;
                     while (index < subscribers.Count)
                     {
-                        var subscriberReference = subscribers[index];
-                        if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                        int actualIndex = subscribers.Count - index - 1;
+
+						var subscriberReference = subscribers[actualIndex];
+                        bool isPendingDelete = deleteQueue.Contains(subscriberReference);
+						if (!isPendingDelete && subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
                             try
                             {
@@ -150,9 +190,23 @@ namespace Outrage.EventBus
                             }
                             index++;
                         }
+                        else if (isPendingDelete)
+                        {
+                            lock (_deleteQueueLockObject)
+                            {
+                                deleteQueue.Dequeue();
+                                lock (_subscribersLockObject)
+                                {
+                                    subscribers.RemoveAt(actualIndex);
+                                }
+                            }
+						}
                         else
                         {
-                            subscribers.RemoveAt(index);
+                            lock (_subscribersLockObject)
+                            {
+                                subscribers.RemoveAt(actualIndex);
+                            }
                         }
                     }
 

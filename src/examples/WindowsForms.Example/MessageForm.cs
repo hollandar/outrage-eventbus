@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Outrage.EventBus;
 using WindowsForms.Example.Messages;
+using System.ComponentModel;
 
 namespace WindowsForms.Example
 {
@@ -9,8 +10,10 @@ namespace WindowsForms.Example
         private readonly IServiceProvider serviceProvider;
         private readonly IClientEventBus clientEventBus;
         private ISubscriber? subscriber;
-        public string Messages { get; set; } = "Enter a message to send it to other forms.";
-        public string TextMessage { get; set; } = String.Empty;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string Messages { get; set; } = "Enter a message to send it to other forms.";
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string TextMessage { get; set; } = String.Empty;
 
         public MessageForm(IServiceProvider serviceProvider)
         {
