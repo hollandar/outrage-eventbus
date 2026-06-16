@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.7.11903.348 stable
+VisualStudioVersion = 18.7.11903.348
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Outrage.EventBus", "src\Outrage.EventBus\Outrage.EventBus.csproj", "{DC21D192-D094-47D6-83A5-69A860DB4F86}"
 EndProject
@@ -16,6 +16,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wpf.Example", "src\examples\Wpf.Example\Wpf.Example.csproj", "{5678F063-C91C-4CE4-B5BC-54EA056EFBCE}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Outrage.EventBus.Perf", "Outrage.EventBus.Perf\Outrage.EventBus.Perf.csproj", "{CBD18AB4-5C2E-4505-BF59-4516D7116889}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlazorWasm.Example", "src\examples\BlazorWasm.Example\BlazorWasm.Example\BlazorWasm.Example.csproj", "{5705EE68-4730-495B-98B6-13BED7DECC6F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlazorWasm.Example.Client", "src\examples\BlazorWasm.Example\BlazorWasm.Example.Client\BlazorWasm.Example.Client.csproj", "{62652E68-05E9-4EAA-98D2-B365CF8AFCAD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,12 +49,23 @@ Global
 		{CBD18AB4-5C2E-4505-BF59-4516D7116889}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CBD18AB4-5C2E-4505-BF59-4516D7116889}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CBD18AB4-5C2E-4505-BF59-4516D7116889}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5705EE68-4730-495B-98B6-13BED7DECC6F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5705EE68-4730-495B-98B6-13BED7DECC6F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5705EE68-4730-495B-98B6-13BED7DECC6F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5705EE68-4730-495B-98B6-13BED7DECC6F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{62652E68-05E9-4EAA-98D2-B365CF8AFCAD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{62652E68-05E9-4EAA-98D2-B365CF8AFCAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{62652E68-05E9-4EAA-98D2-B365CF8AFCAD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{62652E68-05E9-4EAA-98D2-B365CF8AFCAD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F2030EED-9158-4970-A52A-1278E22986E6} = {FFD9EFFB-4CD9-4158-B7CE-3837E2D2054E}
+		{5678F063-C91C-4CE4-B5BC-54EA056EFBCE} = {FFD9EFFB-4CD9-4158-B7CE-3837E2D2054E}
+		{5705EE68-4730-495B-98B6-13BED7DECC6F} = {FFD9EFFB-4CD9-4158-B7CE-3837E2D2054E}
+		{62652E68-05E9-4EAA-98D2-B365CF8AFCAD} = {FFD9EFFB-4CD9-4158-B7CE-3837E2D2054E}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B4157DCC-61AB-421F-9377-796812625ACD}
