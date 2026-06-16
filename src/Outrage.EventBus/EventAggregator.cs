@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Outrage.EventBus.Messages;
 using Outrage.EventBus.Options;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -16,7 +17,6 @@ namespace Outrage.EventBus
         private readonly IServiceProvider serviceProvider;
         private readonly ILogger<EventAggregator>? logger;
         private readonly List<WeakReference<ISubscriber>> subscribers;
-        private readonly Queue<WeakReference<ISubscriber>> deleteQueue;
         private Channel<IMessage> messageChannel;
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
@@ -25,26 +25,13 @@ namespace Outrage.EventBus
         ISubscriber? logSubscriber;
 
         private Task? channelReaderTask = null;
+        private ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
 
-		private readonly object _subscribersLockObject = new object();
-		private readonly object _messageChannelLockObject = new object();
-		private readonly object _deleteQueueLockObject = new object();
-
-		protected EventAggregator(IServiceProvider serviceProvider)
+        protected EventAggregator(IServiceProvider serviceProvider)
         {
-			lock (_subscribersLockObject)
-			{
-				this.subscribers = new List<WeakReference<ISubscriber>>();
-			}
-			lock (_messageChannelLockObject)
-			{
-				this.messageChannel = Channel.CreateUnbounded<IMessage>();
-			}
-            lock (_deleteQueueLockObject)
-            {
-                this.deleteQueue = new Queue<WeakReference<ISubscriber>>();
-            }
-			
+            this.subscribers = new List<WeakReference<ISubscriber>>();
+            this.messageChannel = Channel.CreateUnbounded<IMessage>();
+
             this.serviceProvider = serviceProvider;
             this.logger = this.serviceProvider.GetService<ILogger<EventAggregator>>();
             var options = this.serviceProvider.GetService<EventBusOptions>();
@@ -55,7 +42,7 @@ namespace Outrage.EventBus
                 if (options.ExceptionPublisher) this.AddExceptionPublisher();
                 if (options.LoggingPublisher) this.AddLoggingPublisher();
             }
-		}
+        }
 
         public TSubscriber Subscribe<TSubscriber>(bool subscribed = true) where TSubscriber : ISubscriber
         {
@@ -85,36 +72,51 @@ namespace Outrage.EventBus
 
         public ISubscriber Subscribe(ISubscriber subscriber)
         {
-            lock (_subscribersLockObject)
+            try
             {
+                subscriberLock.EnterWriteLock();
                 this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber, false));
+                return subscriber;
             }
-            return subscriber;
+            finally
+            {
+                subscriberLock.ExitWriteLock();
+            }
         }
 
         public void Unsubscribe(ISubscriber subscriberTarget)
         {
-            lock (_subscribersLockObject)
+            try
             {
-				var references = this.subscribers.Where(reference =>
-				{
-					if (reference.TryGetTarget(out var subscriber))
-					{
-						return subscriber == subscriberTarget;
-					}
+                subscriberLock.EnterUpgradeableReadLock();
+                var references = this.subscribers.Where(reference =>
+                {
+                    if (reference.TryGetTarget(out var subscriber))
+                    {
+                        return subscriber == subscriberTarget;
+                    }
 
-					return false;
-				}).ToList();
+                    return false;
+                }).ToList();
 
-				lock (_deleteQueueLockObject)
-				{
-					foreach (var subscriberReference in references)
-						this.deleteQueue.Enqueue(subscriberReference);
-				}
-			}
-		}
+                try
+                {
+                    subscriberLock.EnterWriteLock();
+                    foreach (var subscriberReference in references)
+                        this.subscribers.Remove(subscriberReference);
+                }
+                finally
+                {
+                    subscriberLock.ExitWriteLock();
+                }
+            }
+            finally
+            {
+                subscriberLock.ExitUpgradeableReadLock();
+            }
+        }
 
-		public IEventAggregator CreateChildBus()
+        public IEventAggregator CreateChildBus()
         {
             var child = new ChildEventAggregator(this.serviceProvider);
             this.Subscribe(child);
@@ -130,7 +132,7 @@ namespace Outrage.EventBus
         public Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
         {
             if (logEnabled)
-                this.messageChannel.Writer.TryWrite(new EventBusLogMessage() { Level = LogLevel.Debug, Message = $"Message published with type {message.GetType().FullName }." });
+                this.messageChannel.Writer.TryWrite(new EventBusLogMessage() { Level = LogLevel.Debug, Message = $"Message published with type {message.GetType().FullName}." });
 
             if (this.messageChannel.Writer.TryWrite(message))
             {
@@ -140,12 +142,9 @@ namespace Outrage.EventBus
             else
             {
                 // message channel writer has been marked as completed, recreate a new message channel
-                lock(_messageChannelLockObject)
-                {
-                    messageChannel = Channel.CreateUnbounded<IMessage>();
-				}
+                messageChannel = Channel.CreateUnbounded<IMessage>();
                 this.logger?.LogWarning("EventBus channel was recreated after the channel writer was closed");
-			}
+            }
             return Task.CompletedTask;
         }
 
@@ -155,67 +154,70 @@ namespace Outrage.EventBus
             List<Exception> exceptionsThrown = new List<Exception>();
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                if (subscriberLock.TryEnterUpgradeableReadLock(5))
                 {
-                    // Starting a new message, clear out the list of exceptions
-                    exceptionsThrown.Clear();
-
-                    var context = new EventContext(this, this.serviceProvider);
-                    var index = 0;
-                    while (index < subscribers.Count)
+                    try
                     {
-                        int actualIndex = subscribers.Count - index - 1;
-
-						var subscriberReference = subscribers[actualIndex];
-                        bool isPendingDelete = deleteQueue.Contains(subscriberReference);
-						if (!isPendingDelete && subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                        while (this.messageChannel.Reader.TryRead(out IMessage? message))
                         {
-                            try
+                            // Starting a new message, clear out the list of exceptions
+                            exceptionsThrown.Clear();
+
+                            var context = new EventContext(this, this.serviceProvider);
+                            var index = 0;
+                            while (index < subscribers.Count)
                             {
-                                await subscriber.HandleAsync(context, message);
-                            }
-                            catch (Exception e)
-                            {
-                                if (e is ConvertableBusException)
+                                int actualIndex = subscribers.Count - index - 1;
+
+                                var subscriberReference = subscribers[actualIndex];
+                                if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                                 {
-                                    var convertableException = e as ConvertableBusException;
-                                    var convertedMessage = convertableException!.Convert(message);
-                                    await this.PublishAsync(convertedMessage);
+                                    try
+                                    {
+                                        await subscriber.HandleAsync(context, message);
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        if (e is ConvertableBusException)
+                                        {
+                                            var convertableException = e as ConvertableBusException;
+                                            var convertedMessage = convertableException!.Convert(message);
+                                            await this.PublishAsync(convertedMessage);
+                                        }
+                                        else
+                                        {
+                                            // Hold exceptions thrown
+                                            exceptionsThrown.Add(e);
+                                        }
+                                    }
+                                    index++;
                                 }
                                 else
                                 {
-                                    // Hold exceptions thrown
-                                    exceptionsThrown.Add(e);
+                                    try
+                                    {
+                                        subscriberLock.EnterWriteLock();
+                                        subscribers.RemoveAt(actualIndex);
+                                    }
+                                    finally
+                                    {
+                                        subscriberLock.ExitWriteLock();
+                                    }
                                 }
                             }
-                            index++;
-                        }
-                        else if (isPendingDelete)
-                        {
-                            lock (_deleteQueueLockObject)
+
+                            // Now throw any process exceptions as an aggregate
+                            if (exceptionsThrown.Any() && logExceptionEnabled)
                             {
-                                deleteQueue.Dequeue();
-                                lock (_subscribersLockObject)
-                                {
-                                    subscribers.RemoveAt(actualIndex);
-                                }
-                            }
-						}
-                        else
-                        {
-                            lock (_subscribersLockObject)
-                            {
-                                subscribers.RemoveAt(actualIndex);
+                                await this.PublishAsync<EventBusExceptionMessage>(
+                                    new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
+                                );
                             }
                         }
                     }
-
-                    // Now throw any process exceptions as an aggregate
-                    if (exceptionsThrown.Any() && logExceptionEnabled)
+                    finally
                     {
-                        await this.PublishAsync<EventBusExceptionMessage>(
-                            new EventBusExceptionMessage (new AggregateException(exceptionsThrown))
-                        );
+                        subscriberLock.ExitUpgradeableReadLock();
                     }
                 }
             }
