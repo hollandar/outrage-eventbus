@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 
 namespace Outrage.EventBus
 {
@@ -21,6 +22,7 @@ namespace Outrage.EventBus
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
+        private bool subscriptionsChanged = false;
         ISubscriber? exceptionSubscriber;
         ISubscriber? logSubscriber;
 
@@ -77,6 +79,7 @@ namespace Outrage.EventBus
             {
                 subscriberLock.EnterWriteLock();
                 this.subscribers.Add(new WeakReference<ISubscriber>(subscriber, false));
+                subscriptionsChanged = true;
                 return subscriber;
             }
             finally
@@ -98,15 +101,18 @@ namespace Outrage.EventBus
                     }
 
                     return false;
-                }).ToList();
+                }).ToArray();
 
-                if (references.Count > 0)
+                if (references.Length > 0)
                 {
                     try
                     {
                         subscriberLock.EnterWriteLock();
                         foreach (var subscriberReference in references)
+                        {
                             this.subscribers.Remove(subscriberReference);
+                            subscriptionsChanged = true;
+                        }
                     }
                     finally
                     {
@@ -140,13 +146,18 @@ namespace Outrage.EventBus
 
             if (this.messageChannel.Writer.TryWrite(message))
             {
-                try
+                if (channelReaderTask == null || channelReaderTask.IsCompleted)
                 {
-                    channelCreationLock.Wait();
-                    if (channelReaderTask == null || channelReaderTask.IsCompleted)
-                        channelReaderTask = Task.Run(ProcessPublishQueue);
+                    try
+                    {
+                        channelCreationLock.Wait();
+                        if (channelReaderTask == null || channelReaderTask.IsCompleted)
+                        {
+                            channelReaderTask = Task.Run(ProcessPublishQueue);
+                        }
+                    }
+                    finally { channelCreationLock.Release(); }
                 }
-                finally { channelCreationLock.Release(); }
             }
             else
             {
@@ -162,22 +173,28 @@ namespace Outrage.EventBus
             CancellationToken cancellationToken = channelReadCancellationSource.Token;
             List<Exception> exceptionsThrown = new List<Exception>();
             var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
+            List<Task> tasks = new List<Task>();
+            var context = new EventContext(this, this.serviceProvider, cancellationToken);
+            IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
+
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                if (subscribersSnapshot is null || subscriptionsChanged)
                 {
-                    // Starting a new message, clear out the list of exceptions
-                    exceptionsThrown.Clear();
-
-                    var context = new EventContext(this, this.serviceProvider, cancellationToken);
-                    var index = 0;
-                    IReadOnlyCollection<WeakReference<ISubscriber>> subscribersSnapshot;
                     try
                     {
                         subscriberLock.EnterReadLock();
                         subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
+                        subscriptionsChanged = false;
                     }
                     finally { subscriberLock.ExitReadLock(); }
+                }
+
+                while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                {
+                    // Starting a new message, clear out the list of exceptions
+                    exceptionsThrown.Clear();
+                    tasks.Clear();
 
                     foreach (var subscriberReference in subscribersSnapshot)
                     {
@@ -187,7 +204,7 @@ namespace Outrage.EventBus
                         {
                             try
                             {
-                                await subscriber.HandleAsync(context, message);
+                                tasks.Add(subscriber.HandleAsync(context, message));
                             }
                             catch (Exception e)
                             {
@@ -203,13 +220,14 @@ namespace Outrage.EventBus
                                     exceptionsThrown.Add(e);
                                 }
                             }
-                            index++;
                         }
                         else
                         {
                             invalidSubscribers.Enqueue(subscriberReference);
                         }
                     }
+
+                    await Task.WhenAll(tasks);
 
                     // Now throw any process exceptions as an aggregate
                     if (exceptionsThrown.Any() && logExceptionEnabled)
@@ -223,7 +241,6 @@ namespace Outrage.EventBus
                 // Clean up any invalid subscribers that were found during processing
                 if (invalidSubscribers.Count > 0)
                 {
-
                     try
                     {
                         subscriberLock.EnterWriteLock();
@@ -233,6 +250,7 @@ namespace Outrage.EventBus
                             if (invalidSubscribers.TryDequeue(out var invalidSubscriber))
                             {
                                 this.subscribers.Remove(invalidSubscriber);
+                                subscriptionsChanged = true;
                             }
                         }
                     }
