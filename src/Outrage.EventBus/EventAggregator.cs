@@ -142,7 +142,8 @@ namespace Outrage.EventBus
                     channelCreationLock.Wait();
                     if (channelReaderTask == null || channelReaderTask.IsCompleted)
                         channelReaderTask = Task.Run(ProcessPublishQueue);
-                } finally { channelCreationLock.Release(); }
+                }
+                finally { channelCreationLock.Release(); }
             }
             else
             {
@@ -157,6 +158,7 @@ namespace Outrage.EventBus
         {
             CancellationToken cancellationToken = channelReadCancellationSource.Token;
             List<Exception> exceptionsThrown = new List<Exception>();
+            var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
                 while (this.messageChannel.Reader.TryRead(out IMessage? message))
@@ -166,20 +168,16 @@ namespace Outrage.EventBus
 
                     var context = new EventContext(this, this.serviceProvider);
                     var index = 0;
-                    while (true)
+                    IReadOnlyCollection<WeakReference<ISubscriber>> subscribersSnapshot;
+                    try
                     {
-                        WeakReference<ISubscriber> subscriberReference;
-                        int actualIndex;
-                        try
-                        {
-                            subscriberLock.EnterReadLock();
-                            if (index >= subscribers.Count)
-                                break;
-                            actualIndex = subscribers.Count - index - 1;
-                            subscriberReference = subscribers[actualIndex];
-                        }
-                        finally { subscriberLock.ExitReadLock(); }
+                        subscriberLock.EnterReadLock();
+                        subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
+                    }
+                    finally { subscriberLock.ExitReadLock(); }
 
+                    foreach (var subscriberReference in subscribersSnapshot)
+                    {
                         if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
                             try
@@ -204,12 +202,7 @@ namespace Outrage.EventBus
                         }
                         else
                         {
-                            try
-                            {
-                                subscriberLock.EnterWriteLock();
-                                subscribers.RemoveAt(actualIndex);
-                            }
-                            finally { subscriberLock.ExitWriteLock(); }
+                            invalidSubscribers.Enqueue(subscriberReference);
                         }
                     }
 
@@ -220,6 +213,25 @@ namespace Outrage.EventBus
                             new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
                         );
                     }
+                }
+
+                // Clean up any invalid subscribers that were found during processing
+                if (invalidSubscribers.Count > 0)
+                {
+
+                    try
+                    {
+                        subscriberLock.EnterWriteLock();
+                        this.logger?.LogInformation($"Cleaning up {invalidSubscribers.Count} invalid subscriber references.");
+                        while (invalidSubscribers.Count > 0)
+                        {
+                            if (invalidSubscribers.TryDequeue(out var invalidSubscriber))
+                            {
+                                this.subscribers.Remove(invalidSubscriber);
+                            }
+                        }
+                    }
+                    finally { subscriberLock.ExitWriteLock(); }
                 }
             }
         }
