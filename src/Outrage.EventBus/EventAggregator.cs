@@ -27,6 +27,8 @@ namespace Outrage.EventBus
         private Task? channelReaderTask = null;
         private ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
 
+        private object lockChannelCreation = new object();
+
         protected EventAggregator(IServiceProvider serviceProvider)
         {
             this.subscribers = new List<WeakReference<ISubscriber>>();
@@ -136,8 +138,9 @@ namespace Outrage.EventBus
 
             if (this.messageChannel.Writer.TryWrite(message))
             {
-                if (channelReaderTask == null || channelReaderTask.IsCompleted)
-                    channelReaderTask = Task.Run(ProcessPublishQueue);
+                lock (lockChannelCreation)
+                    if (channelReaderTask == null || channelReaderTask.IsCompleted)
+                        channelReaderTask = Task.Run(ProcessPublishQueue);
             }
             else
             {
@@ -154,70 +157,66 @@ namespace Outrage.EventBus
             List<Exception> exceptionsThrown = new List<Exception>();
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                if (subscriberLock.TryEnterUpgradeableReadLock(5))
+                while (this.messageChannel.Reader.TryRead(out IMessage? message))
                 {
-                    try
+                    // Starting a new message, clear out the list of exceptions
+                    exceptionsThrown.Clear();
+
+                    var context = new EventContext(this, this.serviceProvider);
+                    var index = 0;
+                    while (true)
                     {
-                        while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                        WeakReference<ISubscriber> subscriberReference;
+                        int actualIndex;
+                        try
                         {
-                            // Starting a new message, clear out the list of exceptions
-                            exceptionsThrown.Clear();
+                            subscriberLock.EnterReadLock();
+                            if (index >= subscribers.Count)
+                                break;
+                            actualIndex = subscribers.Count - index - 1;
+                            subscriberReference = subscribers[actualIndex];
+                        }
+                        finally { subscriberLock.ExitReadLock(); }
 
-                            var context = new EventContext(this, this.serviceProvider);
-                            var index = 0;
-                            while (index < subscribers.Count)
+                        if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                        {
+                            try
                             {
-                                int actualIndex = subscribers.Count - index - 1;
-
-                                var subscriberReference = subscribers[actualIndex];
-                                if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                                await subscriber.HandleAsync(context, message);
+                            }
+                            catch (Exception e)
+                            {
+                                if (e is ConvertableBusException)
                                 {
-                                    try
-                                    {
-                                        await subscriber.HandleAsync(context, message);
-                                    }
-                                    catch (Exception e)
-                                    {
-                                        if (e is ConvertableBusException)
-                                        {
-                                            var convertableException = e as ConvertableBusException;
-                                            var convertedMessage = convertableException!.Convert(message);
-                                            await this.PublishAsync(convertedMessage);
-                                        }
-                                        else
-                                        {
-                                            // Hold exceptions thrown
-                                            exceptionsThrown.Add(e);
-                                        }
-                                    }
-                                    index++;
+                                    var convertableException = e as ConvertableBusException;
+                                    var convertedMessage = convertableException!.Convert(message);
+                                    await this.PublishAsync(convertedMessage);
                                 }
                                 else
                                 {
-                                    try
-                                    {
-                                        subscriberLock.EnterWriteLock();
-                                        subscribers.RemoveAt(actualIndex);
-                                    }
-                                    finally
-                                    {
-                                        subscriberLock.ExitWriteLock();
-                                    }
+                                    // Hold exceptions thrown
+                                    exceptionsThrown.Add(e);
                                 }
                             }
-
-                            // Now throw any process exceptions as an aggregate
-                            if (exceptionsThrown.Any() && logExceptionEnabled)
+                            index++;
+                        }
+                        else
+                        {
+                            try
                             {
-                                await this.PublishAsync<EventBusExceptionMessage>(
-                                    new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
-                                );
+                                subscriberLock.EnterWriteLock();
+                                subscribers.RemoveAt(actualIndex);
                             }
+                            finally { subscriberLock.ExitWriteLock(); }
                         }
                     }
-                    finally
+
+                    // Now throw any process exceptions as an aggregate
+                    if (exceptionsThrown.Any() && logExceptionEnabled)
                     {
-                        subscriberLock.ExitUpgradeableReadLock();
+                        await this.PublishAsync<EventBusExceptionMessage>(
+                            new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
+                        );
                     }
                 }
             }

@@ -32,13 +32,12 @@ while (true)
             rootBus.Unsubscribe(subscriber);
             break;
         case 2:
-            ThreadPool.QueueUserWorkItem(async _ =>
+            Task.Run(async () =>
             {
                 await rootBus.PublishAsync(new TestEvent(Random.Shared.Next()));
             });
             break;
     }
-    await Task.Delay(0);
 }
 
 public record struct TestEvent(long id): IMessage
