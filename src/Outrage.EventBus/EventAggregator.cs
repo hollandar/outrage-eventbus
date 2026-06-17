@@ -202,24 +202,7 @@ namespace Outrage.EventBus
 
                         if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
-                            try
-                            {
-                                tasks.Add(subscriber.HandleAsync(context, message));
-                            }
-                            catch (Exception e)
-                            {
-                                if (e is ConvertableBusException)
-                                {
-                                    var convertableException = e as ConvertableBusException;
-                                    var convertedMessage = convertableException!.Convert(message);
-                                    await this.PublishAsync(convertedMessage);
-                                }
-                                else
-                                {
-                                    // Hold exceptions thrown
-                                    exceptionsThrown.Add(e);
-                                }
-                            }
+                            tasks.Add(subscriber.HandleAsync(context, message));
                         }
                         else
                         {
@@ -228,6 +211,22 @@ namespace Outrage.EventBus
                     }
 
                     await Task.WhenAll(tasks);
+
+                    foreach (var exceptedTask in tasks.Where(t => t.IsFaulted))
+                    {
+                        Exception e = exceptedTask.Exception;
+                        if (e is ConvertableBusException)
+                        {
+                            var convertableException = e as ConvertableBusException;
+                            var convertedMessage = convertableException!.Convert(message);
+                            await this.PublishAsync(convertedMessage);
+                        }
+                        else
+                        {
+                            // Hold exceptions thrown
+                            exceptionsThrown.Add(e);
+                        }
+                    }
 
                     // Now throw any process exceptions as an aggregate
                     if (exceptionsThrown.Any() && logExceptionEnabled)
