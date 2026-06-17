@@ -26,8 +26,7 @@ namespace Outrage.EventBus
 
         private Task? channelReaderTask = null;
         private ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
-
-        private object lockChannelCreation = new object();
+        private SemaphoreSlim channelCreationLock = new SemaphoreSlim(1);
 
         protected EventAggregator(IServiceProvider serviceProvider)
         {
@@ -138,9 +137,12 @@ namespace Outrage.EventBus
 
             if (this.messageChannel.Writer.TryWrite(message))
             {
-                lock (lockChannelCreation)
+                try
+                {
+                    channelCreationLock.Wait();
                     if (channelReaderTask == null || channelReaderTask.IsCompleted)
                         channelReaderTask = Task.Run(ProcessPublishQueue);
+                } finally { channelCreationLock.Release(); }
             }
             else
             {
