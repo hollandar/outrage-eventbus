@@ -166,7 +166,7 @@ namespace Outrage.EventBus
                     // Starting a new message, clear out the list of exceptions
                     exceptionsThrown.Clear();
 
-                    var context = new EventContext(this, this.serviceProvider);
+                    var context = new EventContext(this, this.serviceProvider, cancellationToken);
                     var index = 0;
                     IReadOnlyCollection<WeakReference<ISubscriber>> subscribersSnapshot;
                     try
@@ -178,6 +178,8 @@ namespace Outrage.EventBus
 
                     foreach (var subscriberReference in subscribersSnapshot)
                     {
+                        if (cancellationToken.IsCancellationRequested) { break; }
+
                         if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
                             try
