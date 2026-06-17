@@ -76,7 +76,7 @@ namespace Outrage.EventBus
             try
             {
                 subscriberLock.EnterWriteLock();
-                this.subscribers.Insert(0, new WeakReference<ISubscriber>(subscriber, false));
+                this.subscribers.Add(new WeakReference<ISubscriber>(subscriber, false));
                 return subscriber;
             }
             finally
