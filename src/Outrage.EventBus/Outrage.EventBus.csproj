@@ -6,7 +6,7 @@
 		<Authors>Adrian Holland</Authors>
 		<Company>Webefinity Pty Ltd</Company>
 		<Description>A reusable and heirarchical event bus for dotnet core that hold weak references to subscribers, and publishes events through a threading channel</Description>
-		<Copyright>2020-2021, Webefinity Pty Ltd</Copyright>
+		<Copyright>2020-2026, Webefinity Pty Ltd</Copyright>
 		<IsPackable>true</IsPackable>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
