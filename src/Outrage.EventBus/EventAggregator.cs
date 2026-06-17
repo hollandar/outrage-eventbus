@@ -100,15 +100,18 @@ namespace Outrage.EventBus
                     return false;
                 }).ToList();
 
-                try
+                if (references.Count > 0)
                 {
-                    subscriberLock.EnterWriteLock();
-                    foreach (var subscriberReference in references)
-                        this.subscribers.Remove(subscriberReference);
-                }
-                finally
-                {
-                    subscriberLock.ExitWriteLock();
+                    try
+                    {
+                        subscriberLock.EnterWriteLock();
+                        foreach (var subscriberReference in references)
+                            this.subscribers.Remove(subscriberReference);
+                    }
+                    finally
+                    {
+                        subscriberLock.ExitWriteLock();
+                    }
                 }
             }
             finally
