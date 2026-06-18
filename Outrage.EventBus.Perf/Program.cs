@@ -11,6 +11,8 @@ var serviceProvider = serviceCollection.BuildServiceProvider();
 var rootBus = serviceProvider.GetRequiredService<IRootEventBus>();
 Stack<ISubscriber> subscribers = new Stack<ISubscriber>();
 
+#pragma warning disable CS4014
+
 long count = 0;
 int threadCount = 1000;
 int mag = 1000;

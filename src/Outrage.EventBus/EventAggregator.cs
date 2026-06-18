@@ -26,7 +26,8 @@ namespace Outrage.EventBus
         private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
-        private bool subscriptionsChanged = false;
+        private volatile bool subscriptionsChanged = false;
+        private volatile bool channelReaderRunning = false;
         ISubscriber? exceptionSubscriber;
         ISubscriber? logSubscriber;
 
@@ -152,15 +153,13 @@ namespace Outrage.EventBus
 
             if (this.messageChannel.Writer.TryWrite(message))
             {
-                if (channelReaderTask == null || channelReaderTask.IsCompleted)
+                if (channelReaderTask == null || !channelReaderRunning)
                 {
                     try
                     {
                         channelCreationLock.Wait();
-                        if (channelReaderTask == null || channelReaderTask.IsCompleted)
-                        {
+                        if (channelReaderTask == null || !channelReaderRunning)
                             channelReaderTask = Task.Run(ProcessPublishQueue);
-                        }
                     }
                     finally { channelCreationLock.Release(); }
                 }
@@ -176,95 +175,100 @@ namespace Outrage.EventBus
 
         public async Task ProcessPublishQueue()
         {
-            
-            CancellationToken cancellationToken = channelReadCancellationSource.Token;
-            List<Exception> exceptionsThrown = new List<Exception>();
-            var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
-            List<Task> tasks = new List<Task>();
-            var context = new EventContext(this, this.serviceProvider, cancellationToken);
-            IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
-            int targetCount = 0;
-
-            while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
+            try
             {
+                channelReaderRunning = true;
+                CancellationToken cancellationToken = channelReadCancellationSource.Token;
+                List<Exception> exceptionsThrown = new List<Exception>();
+                var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
+                var context = new EventContext(this, this.serviceProvider, cancellationToken);
+                IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
+                int targetCount = 0;
+
+                while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
+                {
 #if TIMER
                 var timer = Stopwatch.StartNew();
                 long msgCount = 0;
 #endif
-                while (this.messageChannel.Reader.TryRead(out IMessage? message))
-                {
-                    // Subscriptions have changed, build a new snapshot of subscribers
-                    if (subscribersSnapshot is null || subscriptionsChanged)
+                    while (this.messageChannel.Reader.TryRead(out IMessage? message))
                     {
-                        try
-                        {
-                            subscriberLock.EnterReadLock();
-                            subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
-                            targetCount = (int)(this.subscribers.Count * garbagePressure);
-                            subscriptionsChanged = false;
-                        }
-                        finally { subscriberLock.ExitReadLock(); }
-                    }
-
-                    // Starting a new message, clear out the list of exceptions
-                    exceptionsThrown.Clear();
-                    tasks.Clear();
-
-                    foreach (var subscriberReference in subscribersSnapshot)
-                    {
-                        if (cancellationToken.IsCancellationRequested) { break; }
-
-                        if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                        // Subscriptions have changed, build a new snapshot of subscribers
+                        if (subscribersSnapshot is null || subscriptionsChanged)
                         {
                             try
                             {
-                                await subscriber.HandleAsync(context, message);
+                                subscriberLock.EnterReadLock();
+                                subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
+                                targetCount = (int)(this.subscribers.Count * garbagePressure);
+                                subscriptionsChanged = false;
                             }
-                            catch (Exception e)
-                            {
-                                if (e is ConvertableBusException)
-                                {
-                                    var convertableException = e as ConvertableBusException;
-                                    var convertedMessage = convertableException!.Convert(message);
-                                    await this.PublishAsync(convertedMessage);
-                                }
-                                else
-                                {
-                                    // Hold exceptions thrown
-                                    exceptionsThrown.Add(e);
-                                }
-                            }
+                            finally { subscriberLock.ExitReadLock(); }
                         }
-                        else
+
+                        // Starting a new message, clear out the list of exceptions
+                        exceptionsThrown.Clear();
+
+                        foreach (var subscriberReference in subscribersSnapshot)
                         {
-                            invalidSubscribers.Enqueue(subscriberReference);
+                            if (cancellationToken.IsCancellationRequested) { break; }
+
+                            if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                            {
+                                try
+                                {
+                                    await subscriber.HandleAsync(context, message);
+                                }
+                                catch (Exception e)
+                                {
+                                    if (e is ConvertableBusException)
+                                    {
+                                        var convertableException = e as ConvertableBusException;
+                                        var convertedMessage = convertableException!.Convert(message);
+                                        await this.PublishAsync(convertedMessage);
+                                    }
+                                    else
+                                    {
+                                        // Hold exceptions thrown
+                                        exceptionsThrown.Add(e);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                invalidSubscribers.Enqueue(subscriberReference);
+                            }
                         }
-                    }
 
-                    // Now throw any process exceptions as an aggregate
-                    if (exceptionsThrown.Any() && logExceptionEnabled)
-                    {
-                        await this.PublishAsync<EventBusExceptionMessage>(
-                            new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
-                        );
-                    }
+                        // Now throw any process exceptions as an aggregate
+                        if (exceptionsThrown.Any() && logExceptionEnabled)
+                        {
+                            await this.PublishAsync<EventBusExceptionMessage>(
+                                new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
+                            );
+                        }
 
-                    // Clean up any invalid subscribers that were found during processing back to a baseline
-                    if (invalidSubscribers.Count > (targetCount * 4))
-                    {
-                        CleanupInvalidSubscribers(invalidSubscribers, targetCount);
-                    }
+                        // Clean up any invalid subscribers that were found during processing back to a baseline
+                        if (invalidSubscribers.Count > (targetCount * 4))
+                        {
+                            CleanupInvalidSubscribers(invalidSubscribers, targetCount);
+                        }
 #if TIMER
                     Interlocked.Increment(ref msgCount);
                     if (msgCount % 10000 == 0) {
                         Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
                     }
 #endif
+                    }
+
+                    // Clean up all invalid subscribers before waiting for the next message if there are any left
+                    CleanupInvalidSubscribers(invalidSubscribers, 0);
+
                 }
-
-                // Clean up all invalid subscribers before waiting for the next message if there are any left
-                CleanupInvalidSubscribers(invalidSubscribers, 0);
-
+            }
+            finally
+            {
+                channelReaderRunning = false;
             }
         }
 
@@ -273,7 +277,7 @@ namespace Outrage.EventBus
             try
             {
                 subscriberLock.EnterWriteLock();
-                this.logger?.LogInformation($"Cleaning up {invalidSubscribers.Count} invalid subscriber references.");
+                this.logger?.LogDebug($"Cleaning up {invalidSubscribers.Count} invalid subscriber references.");
                 while (invalidSubscribers.Count > targetCount)
                 {
                     if (invalidSubscribers.TryDequeue(out var invalidSubscriber))

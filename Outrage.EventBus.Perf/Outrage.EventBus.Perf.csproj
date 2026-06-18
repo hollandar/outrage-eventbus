@@ -9,10 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Outrage.EventBus" Version="1.0.5" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\src\Outrage.EventBus\Outrage.EventBus.csproj" />
   </ItemGroup>
 
