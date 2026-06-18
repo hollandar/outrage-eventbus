@@ -1,4 +1,7 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿// Define timer to include messages per second logging into the processor for testing purposes
+// #define TIMER
+
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Outrage.EventBus.Messages;
 using Outrage.EventBus.Options;
@@ -10,6 +13,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace Outrage.EventBus
 {
@@ -29,6 +33,8 @@ namespace Outrage.EventBus
         private Task? channelReaderTask = null;
         private ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
         private SemaphoreSlim channelCreationLock = new SemaphoreSlim(1);
+
+        const double garbagePressure = 0.1f;
 
         protected EventAggregator(IServiceProvider serviceProvider)
         {
@@ -170,28 +176,36 @@ namespace Outrage.EventBus
 
         public async Task ProcessPublishQueue()
         {
+            
             CancellationToken cancellationToken = channelReadCancellationSource.Token;
             List<Exception> exceptionsThrown = new List<Exception>();
             var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
             List<Task> tasks = new List<Task>();
             var context = new EventContext(this, this.serviceProvider, cancellationToken);
             IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
+            int targetCount = 0;
 
             while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
             {
-                if (subscribersSnapshot is null || subscriptionsChanged)
-                {
-                    try
-                    {
-                        subscriberLock.EnterReadLock();
-                        subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
-                        subscriptionsChanged = false;
-                    }
-                    finally { subscriberLock.ExitReadLock(); }
-                }
-
+#if TIMER
+                var timer = Stopwatch.StartNew();
+                long msgCount = 0;
+#endif
                 while (this.messageChannel.Reader.TryRead(out IMessage? message))
                 {
+                    // Subscriptions have changed, build a new snapshot of subscribers
+                    if (subscribersSnapshot is null || subscriptionsChanged)
+                    {
+                        try
+                        {
+                            subscriberLock.EnterReadLock();
+                            subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
+                            targetCount = (int)(this.subscribers.Count * garbagePressure);
+                            subscriptionsChanged = false;
+                        }
+                        finally { subscriberLock.ExitReadLock(); }
+                    }
+
                     // Starting a new message, clear out the list of exceptions
                     exceptionsThrown.Clear();
                     tasks.Clear();
@@ -202,29 +216,28 @@ namespace Outrage.EventBus
 
                         if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                         {
-                            tasks.Add(subscriber.HandleAsync(context, message));
+                            try
+                            {
+                                await subscriber.HandleAsync(context, message);
+                            }
+                            catch (Exception e)
+                            {
+                                if (e is ConvertableBusException)
+                                {
+                                    var convertableException = e as ConvertableBusException;
+                                    var convertedMessage = convertableException!.Convert(message);
+                                    await this.PublishAsync(convertedMessage);
+                                }
+                                else
+                                {
+                                    // Hold exceptions thrown
+                                    exceptionsThrown.Add(e);
+                                }
+                            }
                         }
                         else
                         {
                             invalidSubscribers.Enqueue(subscriberReference);
-                        }
-                    }
-
-                    await Task.WhenAll(tasks);
-
-                    foreach (var exceptedTask in tasks.Where(t => t.IsFaulted))
-                    {
-                        Exception e = exceptedTask.Exception;
-                        if (e is ConvertableBusException)
-                        {
-                            var convertableException = e as ConvertableBusException;
-                            var convertedMessage = convertableException!.Convert(message);
-                            await this.PublishAsync(convertedMessage);
-                        }
-                        else
-                        {
-                            // Hold exceptions thrown
-                            exceptionsThrown.Add(e);
                         }
                     }
 
@@ -235,27 +248,42 @@ namespace Outrage.EventBus
                             new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
                         );
                     }
+
+                    // Clean up any invalid subscribers that were found during processing back to a baseline
+                    if (invalidSubscribers.Count > (targetCount * 4))
+                    {
+                        CleanupInvalidSubscribers(invalidSubscribers, targetCount);
+                    }
+#if TIMER
+                    Interlocked.Increment(ref msgCount);
+                    if (msgCount % 10000 == 0) {
+                        Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
+                    }
+#endif
                 }
 
-                // Clean up any invalid subscribers that were found during processing
-                if (invalidSubscribers.Count > 0)
+                // Clean up all invalid subscribers before waiting for the next message if there are any left
+                CleanupInvalidSubscribers(invalidSubscribers, 0);
+
+            }
+        }
+
+        private void CleanupInvalidSubscribers(Queue<WeakReference<ISubscriber>> invalidSubscribers, int targetCount)
+        {
+            try
+            {
+                subscriberLock.EnterWriteLock();
+                this.logger?.LogInformation($"Cleaning up {invalidSubscribers.Count} invalid subscriber references.");
+                while (invalidSubscribers.Count > targetCount)
                 {
-                    try
+                    if (invalidSubscribers.TryDequeue(out var invalidSubscriber))
                     {
-                        subscriberLock.EnterWriteLock();
-                        this.logger?.LogInformation($"Cleaning up {invalidSubscribers.Count} invalid subscriber references.");
-                        while (invalidSubscribers.Count > 0)
-                        {
-                            if (invalidSubscribers.TryDequeue(out var invalidSubscriber))
-                            {
-                                this.subscribers.Remove(invalidSubscriber);
-                                subscriptionsChanged = true;
-                            }
-                        }
+                        this.subscribers.Remove(invalidSubscriber);
+                        subscriptionsChanged = true;
                     }
-                    finally { subscriberLock.ExitWriteLock(); }
                 }
             }
+            finally { subscriberLock.ExitWriteLock(); }
         }
 
         public void AddDefaultExceptionSubscriber(string msg = "Exception thrown processing event chain.")

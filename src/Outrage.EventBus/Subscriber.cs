@@ -14,9 +14,9 @@ namespace Outrage.EventBus
 
         Func<EventContext, IMessage, Task> onMessage;
 
-        public async Task HandleAsync(EventContext context, IMessage message)
+        public Task HandleAsync(EventContext context, IMessage message)
         {
-            await onMessage(context, message);
+            return onMessage(context, message);
         }
 
         public void Dispose()

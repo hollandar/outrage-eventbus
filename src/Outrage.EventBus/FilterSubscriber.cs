@@ -11,12 +11,14 @@ namespace Outrage.EventBus
         }
         protected Func<EventContext, TMessage, Task> onMessage;
 
-        public async Task HandleAsync(EventContext context, IMessage message)
+        public Task HandleAsync(EventContext context, IMessage message)
         {
             if (message is TMessage)
             {
-                await onMessage(context, (TMessage)message);
+                return onMessage(context, (TMessage)message);
             }
+
+            return Task.CompletedTask;
         }
     }
 }

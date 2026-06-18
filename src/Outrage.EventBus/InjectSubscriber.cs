@@ -10,10 +10,10 @@ namespace Outrage.EventBus
         {
         }
 
-        public async Task HandleAsync(EventContext context, IMessage message)
+        public Task HandleAsync(EventContext context, IMessage message)
         {
             var subscriber = context.ServiceProvider.GetRequiredService<TSubscriber>();
-            await subscriber.HandleAsync(context, message);
+            return subscriber.HandleAsync(context, message);
         }
 
         public void Dispose()
