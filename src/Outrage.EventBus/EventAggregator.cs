@@ -28,7 +28,7 @@ namespace Outrage.EventBus
         private bool logExceptionEnabled = false;
         private volatile bool subscriptionsChanged = false;
         private volatile bool channelReaderRunning = false;
-        private bool awaitSubscriberTasks = true;
+        private int maxTaskParallelism = Environment.ProcessorCount / 4;
         ISubscriber? exceptionSubscriber;
         ISubscriber? logSubscriber;
 
@@ -52,7 +52,7 @@ namespace Outrage.EventBus
                 if (options.DefaultLoggingSubscriber) this.AddDefaultLogSubscriber();
                 if (options.ExceptionPublisher) this.AddExceptionPublisher();
                 if (options.LoggingPublisher) this.AddLoggingPublisher();
-                awaitSubscriberTasks = options.AwaitSubscriberTasks;
+                maxTaskParallelism = options.MaxTaskParallelism;
             }
         }
 
@@ -181,7 +181,7 @@ namespace Outrage.EventBus
             {
                 channelReaderRunning = true;
                 CancellationToken cancellationToken = channelReadCancellationSource.Token;
-                var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
+                var invalidSubscribers = new ConcurrentQueue<WeakReference<ISubscriber>>();
                 var context = new EventContext(this, this.serviceProvider, cancellationToken);
                 IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
                 int targetCount = 0;
@@ -208,11 +208,11 @@ namespace Outrage.EventBus
                         }
 
                         // Post the message to each subscriber in a separate task and track any invalid subscribers that are found during processing to be cleaned up after processing completes to avoid locking the subscriber list during processing
-                        foreach (var subscriberReference in subscribersSnapshot)
+                        await Parallel.ForEachAsync(subscribersSnapshot, new ParallelOptions { MaxDegreeOfParallelism = maxTaskParallelism == -1? -1 : Math.Max(1, maxTaskParallelism), CancellationToken = cancellationToken}, async (subscriberReference, cancellationToken) =>
                         {
-                            if (cancellationToken.IsCancellationRequested) { break; }
+                            if (cancellationToken.IsCancellationRequested) { return; }
 
-                            if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
+                            if (subscriberReference.TryGetTarget(out ISubscriber? subscriber) && subscriber is not null)
                             {
                                 var subscriberTask = Task.Run(async () =>
                                 {
@@ -243,14 +243,13 @@ namespace Outrage.EventBus
 
                                 });
 
-                                if (awaitSubscriberTasks)
-                                    await subscriberTask;
+                                await subscriberTask;
                             }
                             else
                             {
                                 invalidSubscribers.Enqueue(subscriberReference);
                             }
-                        }
+                        });
 
                         // Clean up any invalid subscribers that were found during processing back to a baseline
                         if (invalidSubscribers.Count > (targetCount * 4))
@@ -263,7 +262,6 @@ namespace Outrage.EventBus
                         {
                             Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
                         }
-                        Console.Write($"{msgCount},");
 #endif
                     }
 
@@ -278,7 +276,7 @@ namespace Outrage.EventBus
             }
         }
 
-        private void CleanupInvalidSubscribers(Queue<WeakReference<ISubscriber>> invalidSubscribers, int targetCount)
+        private void CleanupInvalidSubscribers(ConcurrentQueue<WeakReference<ISubscriber>> invalidSubscribers, int targetCount)
         {
             try
             {

@@ -13,12 +13,6 @@ namespace Outrage.EventBus
         protected ConvertableBusException(string message, Exception innerException) : base(message, innerException)
         {
         }
-        protected ConvertableBusException(
-           SerializationInfo info,
-           StreamingContext context) : base(info, context)
-        {
-
-        }
 
         public abstract IMessage Convert(IMessage source);
     }

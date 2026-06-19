@@ -8,7 +8,6 @@ using System.Reflection.Metadata.Ecma335;
 var serviceCollection = new ServiceCollection();
 serviceCollection.AddEventBus(options => { 
     options.AddDefaultRootBus();
-    //options.AddExceptionPublisher();
 });
 
 var serviceProvider = serviceCollection.BuildServiceProvider();

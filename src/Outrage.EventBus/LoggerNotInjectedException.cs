@@ -18,8 +18,5 @@ namespace Outrage.EventBus
         {
         }
 
-        protected LoggerNotInjectedException(SerializationInfo info, StreamingContext context) : base(info, context)
-        {
-        }
     }
 }
