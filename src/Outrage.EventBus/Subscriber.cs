@@ -12,7 +12,7 @@ namespace Outrage.EventBus
             this.onMessage = onMessage;
         }
 
-        Func<EventContext, IMessage, Task> onMessage;
+        readonly Func<EventContext, IMessage, Task> onMessage;
 
         public Task HandleAsync(EventContext context, IMessage message)
         {

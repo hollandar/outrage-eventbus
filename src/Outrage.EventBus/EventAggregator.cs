@@ -32,8 +32,8 @@ namespace Outrage.EventBus
         ISubscriber? logSubscriber;
 
         private Task? channelReaderTask = null;
-        private ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
-        private SemaphoreSlim channelCreationLock = new SemaphoreSlim(1);
+        private readonly ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
+        private readonly SemaphoreSlim channelCreationLock = new SemaphoreSlim(1);
 
         const double garbagePressure = 0.1f;
 
@@ -179,7 +179,6 @@ namespace Outrage.EventBus
             {
                 channelReaderRunning = true;
                 CancellationToken cancellationToken = channelReadCancellationSource.Token;
-                List<Exception> exceptionsThrown = new List<Exception>();
                 var invalidSubscribers = new Queue<WeakReference<ISubscriber>>();
                 var context = new EventContext(this, this.serviceProvider, cancellationToken);
                 IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
@@ -206,33 +205,41 @@ namespace Outrage.EventBus
                             finally { subscriberLock.ExitReadLock(); }
                         }
 
-                        // Starting a new message, clear out the list of exceptions
-                        exceptionsThrown.Clear();
-
+                        // Post the message to each subscriber in a separate task and track any invalid subscribers that are found during processing to be cleaned up after processing completes to avoid locking the subscriber list during processing
                         foreach (var subscriberReference in subscribersSnapshot)
                         {
                             if (cancellationToken.IsCancellationRequested) { break; }
 
                             if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                             {
-                                try
+                                _ = Task.Run(async () =>
                                 {
                                     await subscriber.HandleAsync(context, message);
-                                }
-                                catch (Exception e)
+                                }).ContinueWith(async (t) =>
                                 {
-                                    if (e is ConvertableBusException)
+                                    if (t.IsFaulted)
                                     {
-                                        var convertableException = e as ConvertableBusException;
-                                        var convertedMessage = convertableException!.Convert(message);
-                                        await this.PublishAsync(convertedMessage);
-                                    }
-                                    else
-                                    {
-                                        // Hold exceptions thrown
-                                        exceptionsThrown.Add(e);
-                                    }
-                                }
+                                        var e = t.Exception.InnerException;
+                                        if (e is ConvertableBusException)
+                                        {
+                                            var convertableException = e as ConvertableBusException;
+                                            var convertedMessage = convertableException!.Convert(message);
+                                            await this.PublishAsync(convertedMessage);
+                                        }
+                                        else
+                                        {
+                                            // Log any thrown exceptions
+                                            if (logExceptionEnabled)
+                                            {
+                                                    this.logger?.LogError(e, "Exception thrown processing event chain.");
+                                                    await this.PublishAsync<EventBusExceptionMessage>(
+                                                        new EventBusExceptionMessage(new AggregateException(t.Exception.InnerExceptions))
+                                                    );
+                                                }
+                                            }
+                                        }
+
+                                });
                             }
                             else
                             {
@@ -241,12 +248,6 @@ namespace Outrage.EventBus
                         }
 
                         // Now throw any process exceptions as an aggregate
-                        if (exceptionsThrown.Any() && logExceptionEnabled)
-                        {
-                            await this.PublishAsync<EventBusExceptionMessage>(
-                                new EventBusExceptionMessage(new AggregateException(exceptionsThrown))
-                            );
-                        }
 
                         // Clean up any invalid subscribers that were found during processing back to a baseline
                         if (invalidSubscribers.Count > (targetCount * 4))

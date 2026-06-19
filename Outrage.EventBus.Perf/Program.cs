@@ -1,10 +1,15 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Outrage.EventBus;
+using Outrage.EventBus.Messages;
 using Outrage.EventBus.Options;
 using System.Reflection.Metadata.Ecma335;
 
 var serviceCollection = new ServiceCollection();
-serviceCollection.AddEventBus(options => options.AddDefaultRootBus());
+serviceCollection.AddEventBus(options => { 
+    options.AddDefaultRootBus();
+    options.AddExceptionPublisher();
+});
 
 var serviceProvider = serviceCollection.BuildServiceProvider();
 
@@ -15,9 +20,19 @@ Stack<ISubscriber> subscribers = new Stack<ISubscriber>();
 
 long count = 0;
 int threadCount = 1000;
+long exceptionCount = 0;
 int mag = 1000;
 TestEvent testEvent = new TestEvent(0);
 int subscribedCount = 0;
+
+rootBus.Subscribe<EventBusExceptionMessage>((v, e) =>
+{
+    Interlocked.Increment(ref exceptionCount);
+    if (exceptionCount % (threadCount * mag) == 0)
+        Console.WriteLine($"{exceptionCount} exceptions handled.");
+    return Task.CompletedTask;
+});
+
 while (true)
 {
     var next = Random.Shared.Next(0, 3);
