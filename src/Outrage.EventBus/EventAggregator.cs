@@ -28,6 +28,7 @@ namespace Outrage.EventBus
         private bool logExceptionEnabled = false;
         private volatile bool subscriptionsChanged = false;
         private volatile bool channelReaderRunning = false;
+        private bool awaitSubscriberTasks = true;
         ISubscriber? exceptionSubscriber;
         ISubscriber? logSubscriber;
 
@@ -51,6 +52,7 @@ namespace Outrage.EventBus
                 if (options.DefaultLoggingSubscriber) this.AddDefaultLogSubscriber();
                 if (options.ExceptionPublisher) this.AddExceptionPublisher();
                 if (options.LoggingPublisher) this.AddLoggingPublisher();
+                awaitSubscriberTasks = options.AwaitSubscriberTasks;
             }
         }
 
@@ -187,8 +189,8 @@ namespace Outrage.EventBus
                 while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
                 {
 #if TIMER
-                var timer = Stopwatch.StartNew();
-                long msgCount = 0;
+                    var timer = Stopwatch.StartNew();
+                    long msgCount = 0;
 #endif
                     while (this.messageChannel.Reader.TryRead(out IMessage? message))
                     {
@@ -212,7 +214,7 @@ namespace Outrage.EventBus
 
                             if (subscriberReference.TryGetTarget(out ISubscriber subscriber))
                             {
-                                _ = Task.Run(async () =>
+                                var subscriberTask = Task.Run(async () =>
                                 {
                                     await subscriber.HandleAsync(context, message);
                                 }).ContinueWith(async (t) =>
@@ -231,15 +233,18 @@ namespace Outrage.EventBus
                                             // Log any thrown exceptions
                                             if (logExceptionEnabled)
                                             {
-                                                    this.logger?.LogError(e, "Exception thrown processing event chain.");
-                                                    await this.PublishAsync<EventBusExceptionMessage>(
-                                                        new EventBusExceptionMessage(new AggregateException(t.Exception.InnerExceptions))
-                                                    );
-                                                }
+                                                this.logger?.LogError(e, "Exception thrown processing event chain.");
+                                                await this.PublishAsync<EventBusExceptionMessage>(
+                                                    new EventBusExceptionMessage(new AggregateException(t.Exception.InnerExceptions))
+                                                );
                                             }
                                         }
+                                    }
 
                                 });
+
+                                if (awaitSubscriberTasks)
+                                    await subscriberTask;
                             }
                             else
                             {
@@ -247,18 +252,18 @@ namespace Outrage.EventBus
                             }
                         }
 
-                        // Now throw any process exceptions as an aggregate
-
                         // Clean up any invalid subscribers that were found during processing back to a baseline
                         if (invalidSubscribers.Count > (targetCount * 4))
                         {
                             CleanupInvalidSubscribers(invalidSubscribers, targetCount);
                         }
 #if TIMER
-                    Interlocked.Increment(ref msgCount);
-                    if (msgCount % 10000 == 0) {
-                        Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
-                    }
+                        Interlocked.Increment(ref msgCount);
+                        if (msgCount % 1000 == 0)
+                        {
+                            Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
+                        }
+                        Console.Write($"{msgCount},");
 #endif
                     }
 

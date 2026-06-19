@@ -13,6 +13,7 @@ namespace Outrage.EventBus.Options
         bool registerDefaultRoot = false;
         bool registerDefaultClient = false;
         string defaultExceptionMessage = "Exception thrown processing event chain.";
+        bool awaitSubscriberTasks = true;
 
         public bool DefaultExceptionSubscriber => defaultExceptionSubscriber;
         public bool DefaultLoggingSubscriber => defaultLoggingSubscriber;
@@ -21,6 +22,13 @@ namespace Outrage.EventBus.Options
         public bool RegisterDefaultRoot => registerDefaultRoot;
         public bool RegisterDefaultClient => registerDefaultClient;
         public string DefaultExceptionMessage => defaultExceptionMessage;
+        public bool AwaitSubscriberTasks => awaitSubscriberTasks;
+
+        public EventBusOptions UseAwaitSubscriberTasks(bool await = true)
+        {
+            this.awaitSubscriberTasks = await;
+            return this;
+        }
 
         public EventBusOptions UseDefaultExceptionSubscriber(bool use = true)
         {
