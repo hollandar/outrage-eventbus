@@ -1,6 +1,7 @@
 ﻿@page "/counter"
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @inject Outrage.EventBus.IClientEventBus EventBus
+@implements IDisposable
 
 <PageTitle>Counter</PageTitle>
 
@@ -12,12 +13,13 @@
 
 @code {
     private int currentCount = 0;
-    
+    private Outrage.EventBus.ISubscriber subscriber;
+
     record TestEvent(int Value) : Outrage.EventBus.IMessage;
 
     protected override Task OnInitializedAsync()
     {
-        EventBus.Subscribe<TestEvent>(async (c, e) =>
+        subscriber = EventBus.Subscribe<TestEvent>(async (c, e) =>
         {
             this.currentCount = e.Value;
             await InvokeAsync(StateHasChanged);
@@ -29,5 +31,10 @@
     private async Task IncrementCount()
     {
         await EventBus.PublishAsync(new TestEvent(currentCount + 1));
+    }
+
+    public void Dispose()
+    {
+        EventBus.Unsubscribe(subscriber);
     }
 }
