@@ -14,6 +14,8 @@ namespace Outrage.EventBus.Options
         bool registerDefaultClient = false;
         string defaultExceptionMessage = "Exception thrown processing event chain.";
         int maxTaskParallelism = -1;
+        int boundedBusSize = -1;
+        int warningDepth = 10000;
 
         public bool DefaultExceptionSubscriber => defaultExceptionSubscriber;
         public bool DefaultLoggingSubscriber => defaultLoggingSubscriber;
@@ -23,6 +25,8 @@ namespace Outrage.EventBus.Options
         public bool RegisterDefaultClient => registerDefaultClient;
         public string DefaultExceptionMessage => defaultExceptionMessage;
         public int MaxTaskParallelism => maxTaskParallelism;
+        public int BoundedBusSize => boundedBusSize;
+        public int WarningDepth => warningDepth;
 
         public EventBusOptions UseMaxTaskParallelism(int value = -1)
         {
@@ -69,6 +73,18 @@ namespace Outrage.EventBus.Options
         public EventBusOptions SetDefaultExceptionMessage(string message)
         {
             this.defaultExceptionMessage = message;
+            return this;
+        }
+
+        public EventBusOptions UseBoundedBusSize(int size = -1)
+        {
+            this.boundedBusSize = size;
+            return this;
+        }
+
+        public EventBusOptions SetWarningDepth(int size = 10000)
+        {
+            this.warningDepth = size;
             return this;
         }
 

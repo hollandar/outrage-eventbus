@@ -6,9 +6,11 @@ using Outrage.EventBus.Options;
 using System.Reflection.Metadata.Ecma335;
 
 var serviceCollection = new ServiceCollection();
-serviceCollection.AddEventBus(options => { 
-    options.AddDefaultRootBus();
+serviceCollection.AddEventBus(options =>
+{
+    options.AddDefaultRootBus().SetWarningDepth(5000).UseBoundedBusSize(10000);
 });
+serviceCollection.AddLogging(options => options.AddConsole());
 
 var serviceProvider = serviceCollection.BuildServiceProvider();
 
@@ -29,7 +31,7 @@ rootBus.Subscribe<EventBusExceptionMessage>((v, e) =>
     Interlocked.Increment(ref exceptionCount);
     if (exceptionCount % (threadCount * mag) == 0)
         Console.WriteLine($"{exceptionCount} exceptions handled.");
-    return Task.CompletedTask;
+    return Task.Delay(0);
 });
 
 while (true)
@@ -42,9 +44,9 @@ while (true)
             var subsciber = rootBus.Subscribe<TestEvent>((v, e) =>
             {
                 Interlocked.Increment(ref count);
-                if (count % (threadCount * mag )== 0)
+                if (count % (threadCount * mag) == 0)
                     Console.WriteLine($"sid: {count} c: {subscribers.Count} t: {ThreadPool.ThreadCount}");
-                if (Random.Shared.Next(0, 10) == 0) 
+                if (Random.Shared.Next(0, 1000) == 0)
                     throw new InvalidOperationException();
                 return Task.CompletedTask;
             });
@@ -58,7 +60,7 @@ while (true)
             subscribedCount--;
             break;
         case 2:
-            Task.Run(async () =>
+            await Task.Run(async () =>
             {
                 await rootBus.PublishAsync(testEvent);
             });
@@ -66,7 +68,7 @@ while (true)
     }
 }
 
- 
+
 public record TestEvent(long id) : IMessage
 {
     public long Id { get; init; } = id;

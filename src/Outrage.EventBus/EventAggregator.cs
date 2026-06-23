@@ -12,8 +12,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
 
 namespace Outrage.EventBus
 {
@@ -23,17 +21,20 @@ namespace Outrage.EventBus
         private readonly ILogger<EventAggregator>? logger;
         private readonly List<WeakReference<ISubscriber>> subscribers;
         private Channel<IMessage> messageChannel;
-        private readonly CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
+        private CancellationTokenSource channelReadCancellationSource = new CancellationTokenSource();
         private bool logEnabled = false;
         private bool logExceptionEnabled = false;
         private volatile bool subscriptionsChanged = false;
-        private volatile bool channelReaderRunning = false;
-        private int maxTaskParallelism = Environment.ProcessorCount / 4;
-        ISubscriber? exceptionSubscriber;
-        ISubscriber? logSubscriber;
+        private int maxTaskParallelism = -1;
+        private ISubscriber? exceptionSubscriber = null;
+        private ISubscriber? logSubscriber = null;
+        private int warningDepth = 1000;
+        private readonly int boundedBusSize;
+        private volatile bool inWarning = false;
 
         private Task? channelReaderTask = null;
         private readonly ReaderWriterLockSlim subscriberLock = new ReaderWriterLockSlim();
+        private readonly SemaphoreSlim channelReaderCreationLock = new SemaphoreSlim(1);
         private readonly SemaphoreSlim channelCreationLock = new SemaphoreSlim(1);
 
         const double garbagePressure = 0.1f;
@@ -41,7 +42,6 @@ namespace Outrage.EventBus
         protected EventAggregator(IServiceProvider serviceProvider)
         {
             this.subscribers = new List<WeakReference<ISubscriber>>();
-            this.messageChannel = Channel.CreateUnbounded<IMessage>();
 
             this.serviceProvider = serviceProvider;
             this.logger = this.serviceProvider.GetService<ILogger<EventAggregator>>();
@@ -53,6 +53,42 @@ namespace Outrage.EventBus
                 if (options.ExceptionPublisher) this.AddExceptionPublisher();
                 if (options.LoggingPublisher) this.AddLoggingPublisher();
                 maxTaskParallelism = options.MaxTaskParallelism;
+                warningDepth = options.WarningDepth;
+                boundedBusSize = options.BoundedBusSize;
+            }
+
+            RecreateMessageChannel();
+        }
+
+        private void RecreateMessageChannel()
+        {
+
+            while (!channelReaderTask?.IsCompleted ?? false)
+            {
+                channelReadCancellationSource.Cancel();
+                Thread.Sleep(50);
+            }
+
+            this.channelReadCancellationSource = new CancellationTokenSource();
+
+            try
+            {
+                channelCreationLock.Wait();
+                if (boundedBusSize > -1)
+                {
+                    this.messageChannel = Channel.CreateBounded<IMessage>(new BoundedChannelOptions(boundedBusSize) { SingleReader = true }, (message) =>
+                    {
+                        this.logger?.LogWarning($"EventBus channel is full with {message.GetType().Name} {System.Text.Json.JsonSerializer.Serialize(message)} being dropped. Consider increasing the bounded bus size or processing messages faster to avoid dropped messages.");
+                    });
+                }
+                else
+                {
+                    this.messageChannel = Channel.CreateUnbounded<IMessage>(new UnboundedChannelOptions { SingleReader = true });
+                }
+            }
+            finally
+            {
+                channelCreationLock.Release();
             }
         }
 
@@ -148,114 +184,117 @@ namespace Outrage.EventBus
             await this.PublishAsync(message);
         }
 
-        public Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
+        public async Task PublishAsync<TMessage>(TMessage message) where TMessage : IMessage
         {
             if (logEnabled)
                 this.messageChannel.Writer.TryWrite(new EventBusLogMessage() { Level = LogLevel.Debug, Message = $"Message published with type {message.GetType().FullName}." });
 
-            if (this.messageChannel.Writer.TryWrite(message))
+            try
             {
-                if (channelReaderTask == null || !channelReaderRunning)
+                await this.messageChannel.Writer.WriteAsync(message);
+            }
+            catch (ChannelClosedException)
+            {
+                this.logger?.LogWarning("EventBus channel was closed, recreating channel and retrying publish.");
+                RecreateMessageChannel();
+                await this.messageChannel.Writer.WriteAsync(message);
+            }
+            catch (Exception e)
+            {
+                this.logger?.LogError("Failed to publish message to EventBus channel with message {Message}.", e.Message);
+                throw;
+            }
+
+            if (channelReaderTask == null)
+            {
+                try
                 {
-                    try
-                    {
-                        channelCreationLock.Wait();
-                        if (channelReaderTask == null || !channelReaderRunning)
-                            channelReaderTask = Task.Run(ProcessPublishQueue);
-                    }
-                    finally { channelCreationLock.Release(); }
+                    channelReaderCreationLock.Wait();
+                    if (channelReaderTask == null)
+                        channelReaderTask = Task.Run(ProcessPublishQueue);
                 }
+                finally { channelReaderCreationLock.Release(); }
             }
-            else
-            {
-                // message channel writer has been marked as completed, recreate a new message channel
-                messageChannel = Channel.CreateUnbounded<IMessage>();
-                this.logger?.LogWarning("EventBus channel was recreated after the channel writer was closed");
-            }
-            return Task.CompletedTask;
         }
 
         public async Task ProcessPublishQueue()
         {
-            try
-            {
-                channelReaderRunning = true;
-                CancellationToken cancellationToken = channelReadCancellationSource.Token;
-                var invalidSubscribers = new ConcurrentQueue<WeakReference<ISubscriber>>();
-                var context = new EventContext(this, this.serviceProvider, cancellationToken);
-                IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
-                int targetCount = 0;
+            CancellationToken cancellationToken = channelReadCancellationSource.Token;
+            var invalidSubscribers = new ConcurrentQueue<WeakReference<ISubscriber>>();
+            var context = new EventContext(this, this.serviceProvider, cancellationToken);
+            IReadOnlyCollection<WeakReference<ISubscriber>>? subscribersSnapshot = null;
+            int targetCount = 0;
 
-                while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
-                {
+            while (await this.messageChannel.Reader.WaitToReadAsync(cancellationToken))
+            {
 #if TIMER
                     var timer = Stopwatch.StartNew();
                     long msgCount = 0;
 #endif
-                    while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                while (this.messageChannel.Reader.TryRead(out IMessage? message))
+                {
+                    // Subscriptions have changed, build a new snapshot of subscribers
+                    if (subscribersSnapshot is null || subscriptionsChanged)
                     {
-                        // Subscriptions have changed, build a new snapshot of subscribers
-                        if (subscribersSnapshot is null || subscriptionsChanged)
+                        try
                         {
-                            try
-                            {
-                                subscriberLock.EnterReadLock();
-                                subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
-                                targetCount = (int)(this.subscribers.Count * garbagePressure);
-                                subscriptionsChanged = false;
-                            }
-                            finally { subscriberLock.ExitReadLock(); }
+                            subscriberLock.EnterReadLock();
+                            subscribersSnapshot = this.subscribers.GetRange(0, this.subscribers.Count).AsReadOnly();
+                            targetCount = (int)(this.subscribers.Count * garbagePressure);
+                            subscriptionsChanged = false;
                         }
+                        finally { subscriberLock.ExitReadLock(); }
+                    }
 
-                        // Post the message to each subscriber in a separate task and track any invalid subscribers that are found during processing to be cleaned up after processing completes to avoid locking the subscriber list during processing
-                        await Parallel.ForEachAsync(subscribersSnapshot, new ParallelOptions { MaxDegreeOfParallelism = maxTaskParallelism == -1? -1 : Math.Max(1, maxTaskParallelism), CancellationToken = cancellationToken}, async (subscriberReference, cancellationToken) =>
+                    // Post the message to each subscriber in a separate task and track any invalid subscribers that are found during processing to be cleaned up after processing completes to avoid locking the subscriber list during processing
+                    await Parallel.ForEachAsync(subscribersSnapshot, new ParallelOptions { MaxDegreeOfParallelism = maxTaskParallelism == -1 ? -1 : Math.Max(1, maxTaskParallelism), CancellationToken = cancellationToken }, async (subscriberReference, cancellationToken) =>
+                    {
+                        if (cancellationToken.IsCancellationRequested) { return; }
+
+                        if (subscriberReference.TryGetTarget(out ISubscriber? subscriber) && subscriber is not null)
                         {
-                            if (cancellationToken.IsCancellationRequested) { return; }
-
-                            if (subscriberReference.TryGetTarget(out ISubscriber? subscriber) && subscriber is not null)
+                            var subscriberTask = Task.Run(async () =>
                             {
-                                var subscriberTask = Task.Run(async () =>
+                                await subscriber.HandleAsync(context, message);
+                            }).ContinueWith(async (t) =>
+                            {
+                                if (t.IsFaulted)
                                 {
-                                    await subscriber.HandleAsync(context, message);
-                                }).ContinueWith(async (t) =>
-                                {
-                                    if (t.IsFaulted)
+                                    var e = t.Exception.InnerException;
+                                    if (e is ConvertableBusException)
                                     {
-                                        var e = t.Exception.InnerException;
-                                        if (e is ConvertableBusException)
+                                        var convertableException = e as ConvertableBusException;
+                                        var convertedMessage = convertableException!.Convert(message);
+                                        await this.PublishAsync(convertedMessage);
+                                    }
+                                    else
+                                    {
+                                        // Log any thrown exceptions
+                                        if (logExceptionEnabled)
                                         {
-                                            var convertableException = e as ConvertableBusException;
-                                            var convertedMessage = convertableException!.Convert(message);
-                                            await this.PublishAsync(convertedMessage);
-                                        }
-                                        else
-                                        {
-                                            // Log any thrown exceptions
-                                            if (logExceptionEnabled)
-                                            {
-                                                this.logger?.LogError(e, "Exception thrown processing event chain.");
-                                                await this.PublishAsync<EventBusExceptionMessage>(
-                                                    new EventBusExceptionMessage(new AggregateException(t.Exception.InnerExceptions))
-                                                );
-                                            }
+                                            this.logger?.LogError(e, "Exception thrown processing event chain.");
+                                            await this.PublishAsync<EventBusExceptionMessage>(
+                                                new EventBusExceptionMessage(new AggregateException(t.Exception.InnerExceptions))
+                                            );
                                         }
                                     }
+                                }
 
-                                });
+                            });
 
-                                await subscriberTask;
-                            }
-                            else
-                            {
-                                invalidSubscribers.Enqueue(subscriberReference);
-                            }
-                        });
-
-                        // Clean up any invalid subscribers that were found during processing back to a baseline
-                        if (invalidSubscribers.Count > (targetCount * 4))
-                        {
-                            CleanupInvalidSubscribers(invalidSubscribers, targetCount);
+                            await subscriberTask;
                         }
+                        else
+                        {
+                            invalidSubscribers.Enqueue(subscriberReference);
+                        }
+                    });
+
+                    // Clean up any invalid subscribers that were found during processing back to a baseline
+                    if (invalidSubscribers.Count > (targetCount * 4))
+                    {
+                        CleanupInvalidSubscribers(invalidSubscribers, targetCount);
+                    }
 #if TIMER
                         Interlocked.Increment(ref msgCount);
                         if (msgCount % 1000 == 0)
@@ -263,16 +302,26 @@ namespace Outrage.EventBus
                             Console.WriteLine($"Msg / sec = {msgCount / timer.Elapsed.TotalSeconds}");
                         }
 #endif
+
+                    if (this.messageChannel.Reader.CanCount && warningDepth > -1)
+                    {
+                        if (!inWarning && this.messageChannel.Reader.Count > warningDepth)
+                        {
+                            inWarning = true;
+                            this.logger?.LogWarning($"EventBus message channel has {this.messageChannel.Reader.Count} messages waiting to be processed, which is above the configured warning threshold of {warningDepth}. This may indicate that messages are being published faster than they can be processed.");
+                        }
+                        if (inWarning && this.messageChannel.Reader.Count <= warningDepth)
+                        {
+                            this.logger?.LogInformation($"EventBus message channel has {this.messageChannel.Reader.Count} messages waiting to be processed, it is no longer in warning.");
+                            inWarning = false;
+                        }
                     }
-
-                    // Clean up all invalid subscribers before waiting for the next message if there are any left
-                    CleanupInvalidSubscribers(invalidSubscribers, 0);
-
                 }
-            }
-            finally
-            {
-                channelReaderRunning = false;
+
+
+                // Clean up all invalid subscribers before waiting for the next message if there are any left
+                CleanupInvalidSubscribers(invalidSubscribers, 0);
+
             }
         }
 
@@ -316,11 +365,13 @@ namespace Outrage.EventBus
             {
                 throw new LoggerNotInjectedException("Adding default logging, no logging service has been injected.");
             }
+
             this.logSubscriber = this.Subscribe<EventBusLogMessage>((eventContext, eventMessage) =>
             {
                 this.logger.Log(eventMessage.Level, eventMessage.Message);
                 return Task.CompletedTask;
             });
+
             this.logEnabled = true;
         }
 
